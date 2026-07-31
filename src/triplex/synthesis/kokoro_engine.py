@@ -12,10 +12,9 @@ Install: pip install kokoro>=0.9.2 soundfile
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 
@@ -81,8 +80,11 @@ class KokoroEngine:
         if self._initialized:
             return
 
-        print(f"Loading Kokoro-82M...")
-        self._pipeline = KPipeline(lang_code=self.config.lang_code)
+        print("Loading Kokoro-82M...")
+        self._pipeline = KPipeline(
+            lang_code=self.config.lang_code,
+            repo_id=self.config.model_name,
+        )
         self._initialized = True
         print("Kokoro loaded")
 
@@ -110,13 +112,15 @@ class KokoroEngine:
         # Collect all audio chunks
         audio_chunks = []
         for _, _, audio in generator:
-            if isinstance(audio, np.ndarray):
-                audio_chunks.append(audio)
+            audio_array = _as_numpy_audio(audio)
+            if audio_array is not None:
+                audio_chunks.append(audio_array)
 
-        if audio_chunks:
-            audio = np.concatenate(audio_chunks)
-        else:
-            audio = np.array([], dtype=np.float32)
+        audio = (
+            np.concatenate(audio_chunks)
+            if audio_chunks
+            else np.array([], dtype=np.float32)
+        )
 
         return audio, self.config.sample_rate
 
@@ -136,9 +140,10 @@ class KokoroEngine:
         generator = self._pipeline(text, voice=voice, speed=self.config.speed)
 
         for _, _, audio in generator:
-            if isinstance(audio, np.ndarray):
-                duration = len(audio) / self.config.sample_rate
-                yield audio, duration
+            audio_array = _as_numpy_audio(audio)
+            if audio_array is not None:
+                duration = len(audio_array) / self.config.sample_rate
+                yield audio_array, duration
 
     async def synthesize_async(
         self,
@@ -151,6 +156,23 @@ class KokoroEngine:
             None,
             lambda: self.synthesize(text, voice),
         )
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        voice: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Yield signed 16-bit PCM chunks without blocking the event loop."""
+        iterator = iter(self.synthesize_streaming(text, voice))
+
+        while True:
+            item = await asyncio.to_thread(_next_chunk, iterator)
+            if item is None:
+                break
+
+            audio, _duration = item
+            pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
+            yield pcm.tobytes()
 
 
 class VoiceProfile:
@@ -180,12 +202,12 @@ class VoiceProfile:
         # Phase 2: Reference audio for cloning
 
     @classmethod
-    def branded(cls, name: str, voice_id: str) -> "VoiceProfile":
+    def branded(cls, name: str, voice_id: str, description: str = "") -> VoiceProfile:
         """Create a branded voice profile using pre-trained voice."""
-        return cls(name=name, voice_id=voice_id)
+        return cls(name=name, voice_id=voice_id, description=description)
 
     @classmethod
-    def fine_tuned(cls, name: str, embedding_path: Path) -> "VoiceProfile":
+    def fine_tuned(cls, name: str, embedding_path: Path) -> VoiceProfile:
         """Create a fine-tuned voice profile."""
         return cls(name=name, voice_id="custom", embedding_path=embedding_path)
 
@@ -208,3 +230,25 @@ BRANDED_VOICES = {
         description="Deep, confident male voice",
     ),
 }
+
+
+def _next_chunk(
+    iterator: Iterator[tuple[np.ndarray, float]],
+) -> tuple[np.ndarray, float] | None:
+    """Advance a synchronous Kokoro iterator from a worker thread."""
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
+
+
+def _as_numpy_audio(audio: object) -> np.ndarray | None:
+    """Normalize Kokoro's NumPy or Torch output to a CPU NumPy array."""
+    if isinstance(audio, np.ndarray):
+        return audio
+
+    detach = getattr(audio, "detach", None)
+    if callable(detach):
+        return detach().cpu().numpy()
+
+    return None

@@ -5,13 +5,10 @@ Runs the pipeline with mock components to show the flow.
 """
 
 import asyncio
-import sys
-from pathlib import Path
+import math
+import struct
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from src.triplex.pipeline import VoicePipeline, PipelineConfig, LatencyMetrics
+from triplex.pipeline import PipelineConfig, VoicePipeline
 
 
 async def mock_audio_stream(duration_seconds: float = 3.0):
@@ -30,9 +27,6 @@ async def mock_audio_stream(duration_seconds: float = 3.0):
     num_speech_chunks = int(2.0 * 1000 / chunk_ms)
     for i in range(num_speech_chunks):
         # Generate sine wave pattern (looks like speech to simple VAD)
-        import struct
-        import math
-
         samples = []
         for j in range(chunk_samples):
             # Mix of frequencies to look like speech
@@ -66,6 +60,7 @@ async def main():
     config = PipelineConfig(
         use_mock_llm=True,
         use_mock_asr=True,
+        vad_backend="energy",
     )
 
     print("Configuration:")
@@ -86,12 +81,13 @@ async def main():
         turn_count += 1
         print(f"\nTurn {turn_count}:")
         print(f"  Audio output: {len(audio_chunk)} bytes")
-        print(f"  Latency breakdown:")
+        print("  Latency breakdown:")
         print(f"    VAD:    {metrics.vad_ms:.1f}ms")
         print(f"    LLM:    {metrics.llm_first_token_ms:.1f}ms")
         print(f"    TTS:    {metrics.tts_first_chunk_ms:.1f}ms")
         print(f"    TOTAL:  {metrics.total_ms:.1f}ms")
-        print(f"  Target met: {'✅ YES' if metrics.total_ms < config.target_total_latency_ms else '❌ NO'}")
+        target_status = "✅ YES" if metrics.total_ms < config.target_total_latency_ms else "❌ NO"
+        print(f"  Target met: {target_status}")
 
     print()
     print("-" * 60)
@@ -99,17 +95,16 @@ async def main():
     print()
     print("Status:")
     print("  ✅ Pipeline architecture wired")
-    print("  ✅ VAD (Silero) integrated")
-    print("  ✅ LLM (vLLM/Llama 3) scaffolded")
-    print("  ✅ TTS (Kokoro-82M) integrated")
-    print("  ✅ ASR (Whisper) scaffolded")
+    print("  ✅ Energy VAD executed")
+    print("  ✅ Kokoro-82M synthesized real PCM audio")
+    print("  ⚠️ Mock LLM used (vLLM requires supported GPU infrastructure)")
+    print("  ⚠️ Mock ASR used (run the separate Whisper integration test)")
     print()
     print("Next steps:")
-    print("  1. Test with real Kokoro TTS (requires: pip install kokoro)")
-    print("  2. Test with Whisper ASR (requires: pip install faster-whisper)")
-    print("  3. Test with vLLM (requires: CUDA GPU + pip install vllm)")
-    print("  4. Wire echo cancellation (AEC)")
-    print("  5. Implement KVS consumer for Chime SDK")
+    print("  1. Run with real Whisper ASR")
+    print("  2. Run vLLM on a supported CUDA GPU")
+    print("  3. Wire echo cancellation (AEC)")
+    print("  4. Implement and test live KVS ingress and meeting audio egress")
 
 
 if __name__ == "__main__":

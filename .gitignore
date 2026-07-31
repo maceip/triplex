@@ -4,7 +4,7 @@ __pycache__/
 *.wav
 *.mp3
 .DS_Store
-*. egg-info
+*.egg-info/
 dist/
 build/
 .cache/

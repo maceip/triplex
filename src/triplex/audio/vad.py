@@ -56,6 +56,7 @@ class VoiceActivityDetector:
             model="silero_vad",
             force_reload=False,
             onnx=False,
+            trust_repo=True,
         )
         self._model.eval()
 
@@ -79,6 +80,11 @@ class VoiceActivityDetector:
 
     def _detect_silero(self, audio: torch.Tensor, sample_rate: int) -> VoiceState:
         """Use Silero VAD model."""
+        # Silero expects 512 samples at 16 kHz. Pad shorter real-time frames
+        # (Triplex uses 20 ms / 320-sample chunks) so inference is valid.
+        if sample_rate == 16000 and len(audio) < 512:
+            audio = torch.nn.functional.pad(audio, (0, 512 - len(audio)))
+
         with torch.no_grad():
             speech_prob = self._model(audio, sample_rate)
 

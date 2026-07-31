@@ -11,10 +11,8 @@ Options:
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
-from typing import AsyncIterator
 
 import numpy as np
 
@@ -168,7 +166,9 @@ class WhisperASR:
             audio_np,
             language=self.config.language,
             vad_filter=self.config.vad_filter,
-            min_silence_duration_ms=self.config.min_silence_duration_ms,
+            vad_parameters={
+                "min_silence_duration_ms": self.config.min_silence_duration_ms,
+            },
         )
 
         # Combine segments
@@ -187,6 +187,8 @@ class WhisperASR:
 
     async def transcribe(self, audio: bytes, sample_rate: int = 16000) -> str:
         """Transcribe complete audio (non-streaming convenience method)."""
+        if self._model is None:
+            self.initialize()
         result = self._transcribe_chunk(audio, sample_rate)
         return result.text if result else ""
 

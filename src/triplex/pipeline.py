@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator
 
+from .asr.whisper_engine import ASRConfig, MockASR, WhisperASR
 from .audio.vad import VoiceActivityDetector, VoiceState
-from .reasoning.vllm_engine import VLLMEngine, MockReasoningEngine, TokenChunk
+from .reasoning.vllm_engine import MockReasoningEngine, VLLMEngine
 from .synthesis.kokoro_engine import KokoroEngine
-from .asr.whisper_engine import WhisperASR, MockASR
 
 
 @dataclass
@@ -95,7 +95,11 @@ class VoicePipeline:
         )
         self.tts = KokoroEngine()
         self.llm = VLLMEngine() if not self.config.use_mock_llm else MockReasoningEngine()
-        self.asr = WhisperASR() if not self.config.use_mock_asr else MockASR()
+        self.asr = (
+            WhisperASR(ASRConfig(model_size=self.config.asr_model))
+            if not self.config.use_mock_asr
+            else MockASR()
+        )
 
         # State
         self._conversation_history: list[dict] = []
@@ -126,7 +130,7 @@ class VoicePipeline:
         """
         audio_buffer = bytearray()
         last_voice_state = VoiceState.SILENCE
-        silence_start: float | None = None
+        silence_duration_ms = 0.0
         speech_start: float | None = None
 
         pipeline_start_time: float | None = None
@@ -136,46 +140,45 @@ class VoicePipeline:
 
             # Detect voice activity
             voice_state = self.vad.detect(chunk, self.config.sample_rate)
-            vad_time = time.perf_counter()
-
             if voice_state == VoiceState.SPEECH:
                 audio_buffer.extend(chunk)
 
                 if last_voice_state == VoiceState.SILENCE:
                     # Speech started
                     speech_start = chunk_time
-                    silence_start = None
+                    silence_duration_ms = 0.0
 
                 # Check for interruption (user speaking while we are)
                 if self._is_speaking:
                     await self._handle_interruption()
 
             else:  # SILENCE
-                if last_voice_state == VoiceState.SPEECH:
-                    # Speech ended, start silence timer
-                    silence_start = chunk_time
+                if speech_start is not None:
+                    samples = len(chunk) / 2
+                    silence_duration_ms += samples / self.config.sample_rate * 1000
 
                 # Check if silence duration exceeds threshold
-                if silence_start and speech_start:
-                    silence_duration_ms = (chunk_time - silence_start) * 1000
-                    if silence_duration_ms >= self.config.min_speech_duration_ms:
-                        # End of utterance detected - process it
-                        pipeline_start_time = time.perf_counter()
-                        self._latency.vad_ms = (chunk_time - speech_start) * 1000
+                if (
+                    speech_start is not None
+                    and silence_duration_ms >= self.config.min_speech_duration_ms
+                ):
+                    # End of utterance detected - process it
+                    pipeline_start_time = time.perf_counter()
+                    self._latency.vad_ms = (chunk_time - speech_start) * 1000
 
-                        # Transcribe (mock for now - integrate Whisper later)
-                        transcript = await self._transcribe(bytes(audio_buffer))
+                    # Transcribe (mock for now - integrate Whisper later)
+                    transcript = await self._transcribe(bytes(audio_buffer))
 
-                        # Clear buffer
-                        audio_buffer.clear()
-                        silence_start = None
-                        speech_start = None
+                    # Clear buffer
+                    audio_buffer.clear()
+                    silence_duration_ms = 0.0
+                    speech_start = None
 
-                        # Generate response
-                        async for audio_out, metrics in self._generate_response_stream(
-                            transcript, pipeline_start_time
-                        ):
-                            yield audio_out, metrics
+                    # Generate response
+                    async for audio_out, metrics in self._generate_response_stream(
+                        transcript, pipeline_start_time
+                    ):
+                        yield audio_out, metrics
 
             last_voice_state = voice_state
 
@@ -203,6 +206,8 @@ class VoicePipeline:
 
         # Full response text for history
         full_response = ""
+        spoken_text = ""
+        first_audio_chunk = True
 
         try:
             # Stream from LLM
@@ -223,21 +228,31 @@ class VoicePipeline:
                 # For now, only synthesize when we have a complete sentence
                 # TODO: Implement sentence-level streaming
                 if token_chunk.is_final or self._is_sentence_complete(token_chunk.text):
+                    text_to_speak = token_chunk.text
+                    if text_to_speak.startswith(spoken_text):
+                        text_to_speak = text_to_speak[len(spoken_text) :]
+                    text_to_speak = text_to_speak.strip()
+
+                    if not text_to_speak:
+                        continue
+
                     tts_start = time.perf_counter()
 
-                    async for audio_chunk in self.tts.synthesize_stream(token_chunk.text):
+                    async for audio_chunk in self.tts.synthesize_stream(text_to_speak):
                         if self._interrupted:
                             break
 
-                        if tts_start:
+                        if first_audio_chunk:
                             self._latency.tts_first_chunk_ms = (
                                 time.perf_counter() - tts_start
                             ) * 1000
-                            tts_start = None
+                            first_audio_chunk = False
 
                         self._latency.total_ms = (time.perf_counter() - start_time) * 1000
 
                         yield audio_chunk, self._latency
+
+                    spoken_text = token_chunk.text
 
             # Add assistant response to history
             if full_response:
