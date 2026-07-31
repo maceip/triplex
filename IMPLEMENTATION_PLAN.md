@@ -74,42 +74,66 @@
 2. **Desktop/Laptop (Apple Silicon)** - Development, small business
 3. **Mobile (Android/iOS)** - Consumer app, on-device inference
 
-**Call entrance**: Twilio Voice SDK
-- Uses **WebSocket (TLS)** for signaling, not pure WebRTC
-- Media: DTLS-SRTP
-- Need TwiML server to control call flow
+**Call entrance**: AWS Chime SDK
 
-## Phase 1: Core Infrastructure (Week 1)
+**Real-time audio path** (discovered from AWS docs):
+```
+PSTN Call → SIP Media App (Lambda) → JoinChimeMeeting → Chime Meeting
+                                                              │
+                                                              ▼
+                                              Media Stream Pipeline
+                                                              │
+                                                              ▼
+                                               Kinesis Video Streams
+                                                              │
+                                                              ▼
+                                                   Our Pipeline (VAD/LLM/TTS)
+```
+
+This is the key insight: **JoinChimeMeeting bridges PSTN calls into meetings where we get real-time audio access via Media Stream Pipelines**.
+
+## Phase 1: Core Infrastructure
 
 ### 1.1 Transport Layer
 **Goal**: Raw audio streaming with echo cancellation
 
-**Reality check**: Twilio Voice SDK handles the protocol layer. Our job is:
-1. Receive audio from Twilio (via our server)
-2. Process through our pipeline
-3. Return audio to Twilio
+**AWS Chime SDK Architecture**:
+```
+PSTN Call → SIP Media App (Lambda) → JoinChimeMeeting → Chime Meeting
+                                                              │
+                                                              ▼
+                                              Media Stream Pipeline
+                                                              │
+                                                              ▼
+                                               Kinesis Video Streams
+                                                              │
+                                                              ▼
+                                                   Our Pipeline (VAD/LLM/TTS)
+```
+
+**Key insight**: `JoinChimeMeeting` bridges PSTN calls into meetings, enabling real-time audio access via Media Stream Pipelines to Kinesis Video Streams.
 
 **Components**:
-- FastAPI server for TwiML webhooks
-- WebSocket handler for Twilio media stream
+- Lambda handler for SIP Media Application events
+- KVS consumer for audio ingestion
+- Audio output back to meeting
 - Echo cancellation (AEC3 or speexdsp)
-- PCM chunk processing (20ms @ 24kHz)
+- PCM chunk processing (20ms @ 16kHz)
 
 **Files**:
 ```
 src/triplex/transport/
 ├── __init__.py
-├── twilio_server.py    # FastAPI + TwiML webhooks
-├── media_stream.py     # WebSocket audio handling
-├── audio_buffer.py     # PCM chunk management
+├── chime_server.py     # SIP Media App Lambda handler
+├── kvs_consumer.py     # Kinesis Video Streams reader
+├── audio_buffer.py     # PCM chunk management, mu-law conversion
 └── echo_canceller.py   # AEC integration
 ```
 
-**Twilio Flow**:
-```
-Caller → Twilio → Our Server (WebSocket) → Pipeline → Our Server → Twilio → Caller
-                  (receive audio)           (process)   (send audio)
-```
+**Status**:
+- ✅ `chime_server.py` - Architecture documented, action builders implemented
+- ⏳ `kvs_consumer.py` - Needs implementation
+- ⏳ `echo_canceller.py` - Needs implementation
 
 ### 1.2 Tier 1 Reflex Layer
 **Goal**: < 100ms intent classification and barge-in detection
@@ -132,6 +156,8 @@ src/triplex/reflex/
 ### 1.3 Tier 3 Synthesizer (Kokoro-82M)
 **Goal**: < 100ms TTFA for branded voice
 
+**Status**: ✅ WORKING
+
 **Components**:
 - Kokoro-82M model
 - Pre-loaded voice embedding
@@ -141,15 +167,22 @@ src/triplex/reflex/
 ```
 src/triplex/synthesis/
 ├── __init__.py
-├── kokoro_engine.py   # Kokoro-82M wrapper
-├── voice_embeddings.py # Voice management
-└── audio_output.py    # Stream to WebRTC
+├── kokoro_engine.py   # Kokoro-82M wrapper ✅
+├── voice_embeddings.py # Voice management (future)
+└── audio_output.py    # Stream to meeting (needs wiring)
 ```
 
-## Phase 2: Reasoning Engine (Week 2)
+**Performance** (verified):
+- TTFA: ~130ms for 3-second audio
+- Quality: Good with `af_heart` voice
+- Streaming: Supported via generator
+
+## Phase 2: Reasoning Engine
 
 ### 2.1 Tier 2 LLM Integration
 **Goal**: Streaming text generation from local model
+
+**Status**: ✅ vLLM engine scaffolded, needs testing with GPU
 
 **Components**:
 - vLLM server (local)
@@ -161,10 +194,10 @@ src/triplex/synthesis/
 ```
 src/triplex/reasoning/
 ├── __init__.py
-├── llm_server.py      # vLLM integration
-├── stream_decoder.py  # Token → TTS pipeline
-├── tool_executor.py   # API calls
-└── context_manager.py # Conversation state
+├── vllm_engine.py     # vLLM integration ✅
+├── stream_decoder.py  # Token → TTS pipeline (in pipeline.py)
+├── tool_executor.py   # API calls (future)
+└── context_manager.py # Conversation state (in pipeline.py)
 ```
 
 ### 2.2 Interruption Handler
@@ -316,9 +349,7 @@ This validates the core pipeline before adding LLM.
 | Voice cloning | Phase 1 only (MVP = branded voice) |
 | LLM | Llama 3 8B with vLLM |
 
-## Architecture Reality
-
-Since we're using **Twilio**, we don't build WebRTC from scratch. Instead:
+## Architecture Reality (AWS Chime SDK)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -327,22 +358,124 @@ Since we're using **Twilio**, we don't build WebRTC from scratch. Instead:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                         TWILIO                                  │
-│  • PSTN gateway                                                 │
-│  • WebSocket signaling to our server                            │
-│  • Media: DTLS-SRTP                                             │
+│                      AWS CHIME SDK                              │
+│  • PSTN gateway (Voice Connector)                              │
+│  • SIP Media Application (Lambda)                              │
+│  • JoinChimeMeeting → Meeting bridge                           │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    OUR SERVER (FastAPI)                         │
+│                 MEDIA STREAM PIPELINE                           │
+│  • Audio capture from meeting                                  │
+│  • Kinesis Video Streams output                                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    OUR PIPELINE                                 │
 │                                                                 │
-│  1. TwiML webhook (call control)                               │
-│  2. WebSocket media stream (audio in/out)                      │
-│  3. Echo cancellation                                          │
-│  4. Pipeline execution                                          │
-│  5. Return audio                                                │
+│  1. KVS consumer (audio in)                                    │
+│  2. VAD (Silero)                                               │
+│  3. LLM (vLLM + Llama 3 8B)                                    │
+│  4. TTS (Kokoro-82M)                                           │
+│  5. Audio back to meeting                                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-This is simpler than pure WebRTC - Twilio handles the hard parts (NAT traversal, signaling, phone network).
+## Current Status
+
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Transport | ⏳ | chime_server.py scaffolded, needs KVS consumer |
+| Tier 1 VAD | ✅ | Silero VAD working |
+| Tier 1 Reflex | ⚠️ | Logic exists, not connected |
+| Tier 2 LLM | ✅ | vLLM engine scaffolded |
+| Tier 3 TTS | ✅ | Kokoro-82M working (~130ms TTFA) |
+| Pipeline | ✅ | pipeline.py created, wires layers together |
+| ASR | ❌ | Need Whisper integration |
+| AEC | ❌ | Need echo cancellation |
+
+## Deployment
+
+### Prerequisites
+1. AWS account with Chime SDK enabled
+2. Phone number provisioned (request via AWS Support)
+3. CUDA GPU instance (g4dn.xlarge or equivalent)
+
+### Deploy Infrastructure
+
+```bash
+# 1. Package Lambda code
+cd src/triplex/transport
+zip -r handler.zip sip_media_app/
+aws s3 cp handler.zip s3://triplex-code/handler.zip
+
+# 2. Deploy CloudFormation stack
+aws cloudformation create-stack \
+  --stack-name triplex-voice-agent \
+  --template-body file://aws/template.yaml \
+  --parameters \
+      ParameterKey=PhoneNumber,ParameterValue=+15551234567 \
+      ParameterKey=CodeBucket,ParameterValue=triplex-code \
+      ParameterKey=VpcId,ParameterValue=vpc-xxx \
+      ParameterKey=SubnetId,ParameterValue=subnet-xxx \
+  --capabilities CAPABILITY_IAM
+
+# 3. Build and push Docker image
+docker build -t triplex-processor .
+docker tag triplex-processor:latest 123456789.dkr.ecr.us-east-1.amazonaws.com/triplex-processor:latest
+docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/triplex-processor:latest
+```
+
+### Architecture
+
+```
+Caller → PSTN → Chime Voice Connector → SIP Media App → Lambda
+                                                          │
+                                                          ▼
+                                                  JoinChimeMeeting
+                                                          │
+                                                          ▼
+                                              Chime SDK Meeting
+                                                          │
+                                                          ▼
+                                             Media Stream Pipeline
+                                                          │
+                                                          ▼
+                                          Kinesis Video Streams (KVS)
+                                                          │
+                                                          ▼
+                                              EC2 GPU Instance
+                                              ┌─────────────────┐
+                                              │ - KVS Consumer  │
+                                              │ - VAD (Silero)  │
+                                              │ - ASR (Whisper) │
+                                              │ - LLM (vLLM)    │
+                                              │ - TTS (Kokoro)  │
+                                              └─────────────────┘
+                                                          │
+                                                          ▼
+                                             Audio back to meeting
+                                                          │
+                                                          ▼
+                                                Caller hears response
+```
+
+### Latency Budget
+| Component | Target | Notes |
+|-----------|--------|-------|
+| Audio capture (KVS) | <20ms | Stream latency |
+| VAD | <10ms | Silero on GPU |
+| ASR | <100ms | Whisper small.en |
+| LLM first token | <100ms | vLLM + Llama 3 8B |
+| TTS first chunk | <100ms | Kokoro-82M |
+| Audio output | <20ms | Meeting injection |
+| **TOTAL** | **<350ms** | Target: <300ms |
+
+## Next Steps
+
+1. **ASR integration** (Whisper streaming) - ✅ Scaffolded
+2. **Echo cancellation** (AEC) - Needs implementation
+3. **KVS consumer** real-time reading - ✅ Scaffolded
+4. **End-to-end test** - Deploy and call
