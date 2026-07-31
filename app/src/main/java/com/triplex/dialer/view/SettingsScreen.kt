@@ -1,0 +1,88 @@
+package com.triplex.dialer.view
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.triplex.dialer.viewModel.DialerViewModel
+
+/**
+ * Settings screen — Triplex engine configuration.
+ *
+ * Echo delay calibration, voice clone profile management,
+ * Chime meeting region, interruption sensitivity.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    viewModel: DialerViewModel,
+    onBack: () -> Unit,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
+        ) {
+            // Echo cancellation section
+            Text("Echo Cancellation", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Calibrated delay: ${viewModel.echoDelayMs}ms",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Voice cloning section
+            Text("Voice Cloning", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Clone profiles: ${viewModel.cloneProfiles.size}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Chime section
+            Text("AWS Chime SDK", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Media region: auto (us-east-1)",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Interruption section
+            Text("Barge-In (Interruption)", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Teardown deadline: ${viewModel.interruptionDeadlineMs}ms",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // About
+            Text("Triplex Dialer v0.1.0", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Four-paper capability extensions for Chime voice",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+    }
+}
