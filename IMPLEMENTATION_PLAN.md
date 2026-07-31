@@ -473,9 +473,15 @@ Caller → PSTN → Chime Voice Connector → SIP Media App → Lambda
 | Audio output | <20ms | Meeting injection |
 | **TOTAL** | **<350ms** | Target: <300ms |
 
-## Next Steps
+## Next Four Features
 
-1. **ASR integration** (Whisper streaming) - ✅ Scaffolded
-2. **Echo cancellation** (AEC) - Needs implementation
-3. **KVS consumer** real-time reading - ✅ Scaffolded
-4. **End-to-end test** - Deploy and call
+1. **Echo cancellation (AEC)** - Subtract outgoing Triplex speech from incoming call audio so the agent does not hear itself. Needs implementation.
+2. **Live Chime/KVS media integration** - Replace the KVS scaffold with real frame parsing, continuous call-audio ingress, and response-audio egress to the Chime meeting.
+3. **Barge-in and interruption teardown** - Stop queued audio and in-flight generation within 50 ms, then align conversation state with exactly what the caller heard.
+4. **Dynamic zero-shot voice cloning** - Add the later Qwen3-TTS/CosyVoice path and route between the fast branded Kokoro voice and customer-specific voices.
+
+### Validation Gates (Not Additional Features)
+
+- Deploy and complete a live Chime call through KVS ingress and meeting-audio egress.
+- Run the real vLLM reasoning path on supported CUDA hardware.
+- Measure time to first audio, interruption teardown, and full end-to-end latency against the sub-300 ms target.
