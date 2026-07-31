@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Triplex CUDA call-processor host
+
+Parameters:
+  ProcessorImageUri:
+    Type: String
+    AllowedPattern: '^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+:.+$'
+  ProcessorAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: GPU AMI with Docker, AWS CLI, jq, NVIDIA container runtime, and a CUDA 13-capable driver
+  ProcessorInstanceType:
+    Type: String
+    Default: g5.xlarge
+  ProcessorVpcId:
+    Type: AWS::EC2::VPC::Id
+  ProcessorSubnetId:
+    Type: AWS::EC2::Subnet::Id
+  RuntimeSecretArn:
+    Type: String
+    AllowedPattern: '^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$'
+    Description: Secrets Manager JSON with MEETING_GATEWAY_ADMIN_TOKEN and HF_TOKEN
+  CallEventsQueueUrl:
+    Type: String
+    AllowedPattern: '^https://sqs\.[a-z0-9-]+\.amazonaws\.com/[0-9]{12}/.+$'
+  CallEventsQueueArn:
+    Type: String
+    AllowedPattern: '^arn:[^:]+:sqs:[^:]+:[0-9]{12}:.+$'
+  EchoDelayMs:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 1000
+    Description: Measured Chime/PSTN far-end echo delay; calibrate per deployment
+
+Resources:
+  ProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TriplexRuntime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:ChangeMessageVisibility
+                  - sqs:GetQueueAttributes
+                Resource: !Ref CallEventsQueueArn
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeStream
+                  - kinesisvideo:GetDataEndpoint
+                  - kinesisvideo:GetMedia
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - chime:GetMeeting
+                  - chime:CreateAttendee
+                Resource: '*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RuntimeSecretArn
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt ProcessorLogGroup.Arn
+
+  ProcessorProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ProcessorRole]
+
+  ProcessorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Egress-only Triplex worker
+      VpcId: !Ref ProcessorVpcId
+
+  ProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 30
+
+  ProcessorInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ProcessorAmiId
+      InstanceType: !Ref ProcessorInstanceType
+      IamInstanceProfile: !Ref ProcessorProfile
+      SubnetId: !Ref ProcessorSubnetId
+      SecurityGroupIds: [!Ref ProcessorSecurityGroup]
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 100
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          runtime_json=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id '${RuntimeSecretArn}' --query SecretString --output text)
+          gateway_token=$(jq -er '.MEETING_GATEWAY_ADMIN_TOKEN' <<<"$runtime_json")
+          hf_token=$(jq -er '.HF_TOKEN' <<<"$runtime_json")
+          registry=$(cut -d/ -f1 <<<'${ProcessorImageUri}')
+          aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin "$registry"
+          docker pull '${ProcessorImageUri}'
+          docker run -d --name triplex --restart unless-stopped --gpus all \
+            --log-driver awslogs \
+            --log-opt awslogs-region=${AWS::Region} \
+            --log-opt awslogs-group='${ProcessorLogGroup}' \
+            -e AWS_REGION=${AWS::Region} \
+            -e CALL_EVENTS_QUEUE_URL='${CallEventsQueueUrl}' \
+            -e MEETING_GATEWAY_ADMIN_TOKEN="$gateway_token" \
+            -e HF_TOKEN="$hf_token" \
+            -e ECHO_DELAY_MS=${EchoDelayMs} \
+            -e USE_MOCK_LLM=false \
+            -e USE_MOCK_ASR=false \
+            '${ProcessorImageUri}'
+
+Outputs:
+  ProcessorInstanceId:
+    Value: !Ref ProcessorInstance

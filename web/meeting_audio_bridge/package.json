@@ -1,0 +1,15 @@
+{
+  "name": "triplex-meeting-audio-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "esbuild src/meeting-bridge.ts --bundle --minify --platform=browser --target=chrome120 --main-fields=browser,module,main --conditions=browser --outfile=../../src/triplex/transport/meeting_gateway_static/meeting-bridge.js && node scripts/normalize-bundle.mjs && cp src/index.html src/pcm-worklet.js ../../src/triplex/transport/meeting_gateway_static/"
+  },
+  "dependencies": {
+    "amazon-chime-sdk-js": "3.32.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3"
+  }
+}

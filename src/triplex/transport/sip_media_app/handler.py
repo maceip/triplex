@@ -1,321 +1,263 @@
-"""Production Lambda handler for Chime SDK SIP Media Application.
+"""AWS Lambda entry point for the Triplex SIP media application.
 
-This is the main entry point for the voice agent.
-
-Deploy:
-    cd src/triplex/transport
-    zip -r handler.zip sip_media_app/
-    aws lambda update-function-code --function-name triplex-sip-handler --zip-file fileb://handler.zip
-
-Environment variables required:
-    - MEDIA_PIPELINE_KVS_STREAM: Kinesis Video Stream name for audio capture
-    - AUDIO_BUCKET: S3 bucket for audio files
-    - MEETING_REGION: AWS region for Chime meetings (default: us-east-1)
+The handler creates a Chime SDK meeting, joins the PSTN leg, and starts an
+``IndividualAudio`` media stream pipeline backed by a pre-provisioned Kinesis
+Video Streams pool.  Call-scoped resource identifiers are stored in SIP
+``TransactionAttributes`` so cleanup remains correct across Lambda cold starts.
 """
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
-# Import action builders - these will be in the Lambda layer
-from chime_server import (
-    ChimeEvent,
-    ChimeEventType,
-    build_response,
-    action_answer_call,
-    action_hangup,
-    action_join_chime_meeting,
-)
+try:
+    from triplex.transport.chime_server import (
+        ChimeEvent,
+        ChimeEventType,
+        action_hangup,
+        action_join_chime_meeting,
+        build_response,
+    )
+except ImportError:  # Lambda zip with chime_server.py beside handler.py
+    from chime_server import (  # type: ignore[import-not-found,no-redef]
+        ChimeEvent,
+        ChimeEventType,
+        action_hangup,
+        action_join_chime_meeting,
+        build_response,
+    )
 
 try:
     import boto3
 
     HAS_BOTO3 = True
-except ImportError:
+except ImportError:  # pragma: no cover - Lambda image always installs boto3
     HAS_BOTO3 = False
 
 
-@dataclass
+LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+
+
+@dataclass(frozen=True)
 class CallSession:
-    """Active call session state."""
+    """AWS resources owned by one PSTN transaction."""
 
     call_id: str
-    from_number: str
-    to_number: str
-    meeting_id: str | None = None
-    attendee_id: str | None = None
-    pipeline_arn: str | None = None
-    created_at: float = 0.0
+    meeting_id: str
+    meeting_arn: str
+    caller_attendee_id: str
+    media_pipeline_id: str
+    created_at: float
 
-
-# Global state (per Lambda container)
-_active_sessions: dict[str, CallSession] = {}
-
-# AWS clients (initialized lazily)
-_chime_client = None
-_chime_sdk_client = None
-_kinesisvideo_client = None
-_s3_client = None
-
-
-def get_chime_client():
-    """Get or create Chime SDK client."""
-    global _chime_client
-    if _chime_client is None:
-        _chime_client = boto3.client("chime", region_name="us-east-1")
-    return _chime_client
-
-
-def get_chime_sdk_meetings_client():
-    """Get Chime SDK meetings client."""
-    global _chime_sdk_client
-    region = os.environ.get("MEETING_REGION", "us-east-1")
-    if _chime_sdk_client is None:
-        _chime_sdk_client = boto3.client(
-            "chime-sdk-meetings",
-            region_name=region,
-        )
-    return _chime_sdk_client
-
-
-def get_kinesisvideo_client():
-    """Get Kinesis Video Streams client."""
-    global _kinesisvideo_client
-    if _kinesisvideo_client is None:
-        _kinesisvideo_client = boto3.client("kinesisvideo", region_name="us-east-1")
-    return _kinesisvideo_client
-
-
-def get_s3_client():
-    """Get S3 client."""
-    global _s3_client
-    if _s3_client is None:
-        _s3_client = boto3.client("s3")
-    return _s3_client
-
-
-def create_meeting_for_call(call_id: str) -> dict:
-    """Create a Chime SDK meeting for the call.
-
-    Returns meeting info with join token.
-    """
-    client = get_chime_sdk_meetings_client()
-
-    response = client.create_meeting(
-        ClientRequestToken=call_id,
-        MediaRegion=os.environ.get("MEETING_REGION", "us-east-1"),
-        ExternalMeetingId=f"voice-agent-{call_id[:12]}",
-    )
-
-    return response["Meeting"]
-
-
-def create_attendee(meeting_id: str, call_id: str) -> dict:
-    """Create an attendee for the caller.
-
-    Returns attendee info with join token.
-    """
-    client = get_chime_sdk_meetings_client()
-
-    response = client.create_attendee(
-        MeetingId=meeting_id,
-        ExternalUserId=f"caller-{call_id[:12]}",
-    )
-
-    return response["Attendee"]
-
-
-def create_media_pipeline(meeting_id: str, stream_name: str) -> str:
-    """Create Media Stream Pipeline to capture audio to KVS.
-
-    Returns pipeline ARN.
-    """
-    client = get_kinesisvideo_client()
-
-    # Create media stream pipeline
-    # This captures audio from the meeting and writes to KVS
-    response = client.create_media_stream_pipeline(
-        MediaPipelineConfiguration={
-            "Sources": [
-                {
-                    "SourceType": "ChimeSdkMeeting",
-                    "SourceConfiguration": {
-                        "ChimeSdkMeetingConfiguration": {
-                            "MeetingId": meeting_id,
-                            "AttendeeConfiguration": {
-                                "AttendeeMode": "AllAttendees",
-                            },
-                        }
-                    },
-                }
-            ],
-            "Sinks": [
-                {
-                    "SinkType": "KinesisVideoStream",
-                    "SinkConfiguration": {
-                        "KinesisVideoStreamConfiguration": {
-                            "StreamName": stream_name,
-                            "Region": os.environ.get("MEETING_REGION", "us-east-1"),
-                        }
-                    },
-                }
-            ],
+    def transaction_attributes(self) -> dict[str, str]:
+        return {
+            "triplex_call_id": self.call_id,
+            "triplex_meeting_id": self.meeting_id,
+            "triplex_meeting_arn": self.meeting_arn,
+            "triplex_caller_attendee_id": self.caller_attendee_id,
+            "triplex_media_pipeline_id": self.media_pipeline_id,
+            "triplex_created_at": str(self.created_at),
         }
+
+
+_meetings_client: Any | None = None
+_media_pipelines_client: Any | None = None
+
+
+def _require_boto3() -> None:
+    if not HAS_BOTO3:
+        raise RuntimeError("boto3 is required by the deployed SIP handler")
+
+
+def get_meetings_client() -> Any:
+    global _meetings_client
+    _require_boto3()
+    if _meetings_client is None:
+        _meetings_client = boto3.client(
+            "chime-sdk-meetings", region_name=_meeting_region()
+        )
+    return _meetings_client
+
+
+def get_media_pipelines_client() -> Any:
+    global _media_pipelines_client
+    _require_boto3()
+    if _media_pipelines_client is None:
+        _media_pipelines_client = boto3.client(
+            "chime-sdk-media-pipelines", region_name=_meeting_region()
+        )
+    return _media_pipelines_client
+
+
+def create_meeting_for_call(call_id: str) -> dict[str, Any]:
+    response = get_meetings_client().create_meeting(
+        ClientRequestToken=call_id,
+        MediaRegion=_meeting_region(),
+        ExternalMeetingId=f"triplex-{call_id}"[:64],
     )
+    return dict(response["Meeting"])
 
-    return response["MediaPipeline"]["MediaPipelineArn"]
+
+def create_caller_attendee(meeting_id: str, call_id: str) -> dict[str, Any]:
+    response = get_meetings_client().create_attendee(
+        MeetingId=meeting_id,
+        ExternalUserId=f"caller-{call_id}"[:64],
+    )
+    return dict(response["Attendee"])
 
 
-def delete_media_pipeline(pipeline_arn: str) -> None:
-    """Delete Media Stream Pipeline."""
-    client = get_kinesisvideo_client()
-    try:
-        client.delete_media_pipeline(MediaPipelineArn=pipeline_arn)
-    except Exception:
-        pass  # Best effort cleanup
+def create_media_pipeline(meeting_arn: str, call_id: str) -> dict[str, Any]:
+    pool_arn = os.environ.get("KVS_POOL_ARN")
+    if not pool_arn:
+        raise RuntimeError("KVS_POOL_ARN must identify an ACTIVE Chime KVS pool")
+
+    response = get_media_pipelines_client().create_media_stream_pipeline(
+        Sources=[{"SourceType": "ChimeSdkMeeting", "SourceArn": meeting_arn}],
+        Sinks=[
+            {
+                "SinkArn": pool_arn,
+                "SinkType": "KinesisVideoStreamPool",
+                "ReservedStreamCapacity": int(
+                    os.environ.get("KVS_RESERVED_STREAM_CAPACITY", "2")
+                ),
+                "MediaStreamType": "IndividualAudio",
+            }
+        ],
+        ClientRequestToken=call_id,
+        Tags=[{"Key": "triplex:call-id", "Value": call_id}],
+    )
+    return dict(response["MediaStreamPipeline"])
+
+
+def delete_media_pipeline(media_pipeline_id: str) -> None:
+    get_media_pipelines_client().delete_media_pipeline(
+        MediaPipelineId=media_pipeline_id
+    )
 
 
 def end_meeting(meeting_id: str) -> None:
-    """End the Chime meeting."""
-    client = get_chime_sdk_meetings_client()
-    try:
-        client.delete_meeting(MeetingId=meeting_id)
-    except Exception:
-        pass  # Best effort cleanup
+    get_meetings_client().delete_meeting(MeetingId=meeting_id)
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Main Lambda handler for Chime SDK SIP Media Application.
-
-    Events:
-        - NEW_INBOUND_CALL: Create meeting, bridge call, start pipeline
-        - HANGUP: Cleanup resources
-        - CALL_ANSWERED: (optional) logging
-    """
+    """Handle Chime SDK PSTN audio invocation events."""
+    del context
     chime_event = ChimeEvent.from_lambda_event(event)
-    call_details = chime_event.call_details
-
-    print(f"Received event: {chime_event.event_type.value}")
-    print(f"Call ID: {call_details.call_id}")
-    print(f"From: {call_details.from_number}")
+    LOGGER.info(
+        "SIP event=%s transaction=%s call=%s",
+        chime_event.event_type.value,
+        chime_event.call_details.transaction_id,
+        chime_event.call_details.call_id,
+    )
 
     if chime_event.event_type == ChimeEventType.NEW_INBOUND_CALL:
         return handle_new_call(chime_event)
-
-    elif chime_event.event_type == ChimeEventType.HANGUP:
+    if chime_event.event_type == ChimeEventType.ACTION_FAILED:
+        return handle_action_failed(chime_event)
+    if chime_event.event_type == ChimeEventType.HANGUP:
         return handle_hangup(chime_event)
-
-    # Default: no action
     return build_response([])
 
 
 def handle_new_call(event: ChimeEvent) -> dict[str, Any]:
-    """Handle NEW_INBOUND_CALL event.
+    call_id = event.call_details.call_id
+    if not call_id:
+        raise ValueError("NEW_INBOUND_CALL did not contain a LEG-A CallId")
 
-    Creates meeting, bridges call, starts media pipeline.
-    """
-    call_details = event.call_details
-    call_id = call_details.call_id
-
+    meeting_id: str | None = None
+    pipeline_id: str | None = None
     try:
-        # 1. Create Chime SDK meeting
         meeting = create_meeting_for_call(call_id)
-        meeting_id = meeting["MeetingId"]
+        meeting_id = str(meeting["MeetingId"])
+        meeting_arn = str(meeting["MeetingArn"])
+        attendee = create_caller_attendee(meeting_id, call_id)
+        pipeline = create_media_pipeline(meeting_arn, call_id)
+        pipeline_id = str(pipeline["MediaPipelineId"])
 
-        # 2. Create attendee for caller
-        attendee = create_attendee(meeting_id, call_id)
-        attendee_id = attendee["AttendeeId"]
-        join_token = attendee["JoinToken"]
-
-        # 3. Create Media Stream Pipeline for audio capture
-        kvs_stream = os.environ.get("MEDIA_PIPELINE_KVS_STREAM", "triplex-audio-stream")
-        pipeline_arn = create_media_pipeline(meeting_id, kvs_stream)
-
-        # 4. Store session state
         session = CallSession(
             call_id=call_id,
-            from_number=call_details.from_number,
-            to_number=call_details.to_number,
             meeting_id=meeting_id,
-            attendee_id=attendee_id,
-            pipeline_arn=pipeline_arn,
+            meeting_arn=meeting_arn,
+            caller_attendee_id=str(attendee["AttendeeId"]),
+            media_pipeline_id=pipeline_id,
             created_at=time.time(),
         )
-        _active_sessions[call_id] = session
-
-        print(f"Created meeting: {meeting_id}")
-        print(f"Started pipeline: {pipeline_arn}")
-
-        # 5. Return JoinChimeMeeting action
-        # This bridges the PSTN call into the meeting
-        return build_response([
-            action_join_chime_meeting(join_token),
-        ])
-
-    except Exception as e:
-        print(f"Error handling new call: {e}")
-        # Best effort cleanup
-        if "meeting_id" in dir():
-            end_meeting(meeting_id)
-
-        # Return error greeting via Polly TTS as fallback
-        return build_response([
-            {
-                "Type": "SpeakText",
-                "Parameters": {
-                    "CallId": call_id,
-                    "Text": "I'm sorry, we're experiencing technical difficulties. Please try again later.",
-                    "Engine": "neural",
+        LOGGER.info(
+            "Created meeting=%s media_pipeline=%s call=%s",
+            meeting_id,
+            pipeline_id,
+            call_id,
+        )
+        return build_response(
+            [
+                action_join_chime_meeting(
+                    str(attendee["JoinToken"]), call_id, meeting_id
+                )
+            ],
+            transaction_attributes=session.transaction_attributes(),
+        )
+    except Exception:
+        LOGGER.exception("Failed to initialize Chime media for call=%s", call_id)
+        _cleanup_partial_session(pipeline_id, meeting_id)
+        return build_response(
+            [
+                {
+                    "Type": "SpeakText",
+                    "Parameters": {
+                        "CallId": call_id,
+                        "Text": (
+                            "The automated assistant could not start. "
+                            "Please try again later."
+                        ),
+                        "Engine": "neural",
+                    },
                 },
-            },
-            action_hangup(call_id, "Error"),
-        ])
+                action_hangup(call_id, "Error"),
+            ]
+        )
 
 
 def handle_hangup(event: ChimeEvent) -> dict[str, Any]:
-    """Handle HANGUP event.
-
-    Cleanup meeting and media pipeline.
-    """
-    call_details = event.call_details
-    call_id = call_details.call_id
-
-    session = _active_sessions.pop(call_id, None)
-
-    if session:
-        # Cleanup resources
-        if session.pipeline_arn:
-            delete_media_pipeline(session.pipeline_arn)
-
-        if session.meeting_id:
-            end_meeting(session.meeting_id)
-
-        print(f"Cleaned up session for call {call_id}")
-
-    return build_response([])
+    attributes = event.call_details.transaction_attributes or {}
+    pipeline_id = attributes.get("triplex_media_pipeline_id")
+    meeting_id = attributes.get("triplex_meeting_id")
+    _cleanup_partial_session(pipeline_id, meeting_id)
+    return build_response([], transaction_attributes={})
 
 
-# For local testing
-if __name__ == "__main__":
-    # Test event
-    test_event = {
-        "InvocationEventType": "NEW_INBOUND_CALL",
-        "CallDetails": {
-            "CallId": "test-call-id-123",
-            "CallDirection": "Inbound",
-            "Participants": [
-                {
-                    "ParticipantId": "participant-123",
-                    "From": "+15551234567",
-                    "To": "+15559876543",
-                }
-            ],
-        },
-    }
+def handle_action_failed(event: ChimeEvent) -> dict[str, Any]:
+    """Fail closed and release resources when the meeting join is rejected."""
+    attributes = event.call_details.transaction_attributes or {}
+    _cleanup_partial_session(
+        attributes.get("triplex_media_pipeline_id"),
+        attributes.get("triplex_meeting_id"),
+    )
+    call_id = event.call_details.call_id
+    actions = [action_hangup(call_id, "Error")] if call_id else []
+    return build_response(actions, transaction_attributes={})
 
-    result = lambda_handler(test_event, None)
-    print(json.dumps(result, indent=2))
+
+def _cleanup_partial_session(
+    media_pipeline_id: str | None, meeting_id: str | None
+) -> None:
+    if media_pipeline_id:
+        try:
+            delete_media_pipeline(media_pipeline_id)
+        except Exception:
+            LOGGER.exception(
+                "Failed to delete media pipeline=%s during cleanup", media_pipeline_id
+            )
+    if meeting_id:
+        try:
+            end_meeting(meeting_id)
+        except Exception:
+            LOGGER.exception("Failed to delete meeting=%s during cleanup", meeting_id)
+
+
+def _meeting_region() -> str:
+    return os.environ.get("MEETING_REGION", "us-east-1")

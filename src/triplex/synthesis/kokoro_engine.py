@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -35,6 +36,15 @@ class KokoroConfig:
     lang_code: str = "a"  # American English
     sample_rate: int = 24000
     speed: float = 1.0
+
+
+@dataclass(frozen=True)
+class SynthesizedAudioChunk:
+    """PCM plus the source text represented by the synthesizer chunk."""
+
+    pcm: bytes
+    sample_rate: int
+    text: str
 
 
 # Recommended branded voices
@@ -74,6 +84,7 @@ class KokoroEngine:
         self.config = config or KokoroConfig()
         self._pipeline: KPipeline | None = None
         self._initialized = False
+        self._async_synthesis_lock = asyncio.Lock()
 
     def initialize(self) -> None:
         """Load model (lazy)."""
@@ -87,6 +98,12 @@ class KokoroEngine:
         )
         self._initialized = True
         print("Kokoro loaded")
+
+    def _require_pipeline(self) -> KPipeline:
+        self.initialize()
+        if self._pipeline is None:
+            raise RuntimeError("Kokoro initialization did not create a pipeline")
+        return self._pipeline
 
     def synthesize(
         self,
@@ -102,12 +119,12 @@ class KokoroEngine:
         Returns:
             Tuple of (audio_array, sample_rate)
         """
-        self.initialize()
+        pipeline = self._require_pipeline()
 
         voice = voice or self.config.default_voice
 
         # Kokoro returns a generator that yields (graphemes, phonemes, audio)
-        generator = self._pipeline(text, voice=voice, speed=self.config.speed)
+        generator = pipeline(text, voice=voice, speed=self.config.speed)
 
         # Collect all audio chunks
         audio_chunks = []
@@ -134,10 +151,10 @@ class KokoroEngine:
         Yields:
             Tuple of (audio_chunk, duration_seconds)
         """
-        self.initialize()
+        pipeline = self._require_pipeline()
 
         voice = voice or self.config.default_voice
-        generator = self._pipeline(text, voice=voice, speed=self.config.speed)
+        generator = pipeline(text, voice=voice, speed=self.config.speed)
 
         for _, _, audio in generator:
             audio_array = _as_numpy_audio(audio)
@@ -163,16 +180,35 @@ class KokoroEngine:
         voice: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Yield signed 16-bit PCM chunks without blocking the event loop."""
-        iterator = iter(self.synthesize_streaming(text, voice))
+        async for chunk in self.synthesize_stream_chunks(text, voice):
+            yield chunk.pcm
 
-        while True:
-            item = await asyncio.to_thread(_next_chunk, iterator)
-            if item is None:
-                break
+    async def synthesize_stream_chunks(
+        self,
+        text: str,
+        voice: str | None = None,
+    ) -> AsyncIterator[SynthesizedAudioChunk]:
+        """Yield annotated PCM chunks for interruption state alignment."""
+        async with self._async_synthesis_lock:
+            pipeline = self._require_pipeline()
+            selected_voice = voice or self.config.default_voice
+            iterator = iter(
+                pipeline(text, voice=selected_voice, speed=self.config.speed)
+            )
 
-            audio, _duration = item
-            pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
-            yield pcm.tobytes()
+            while True:
+                item = await asyncio.to_thread(_next_kokoro_chunk, iterator)
+                if item is None:
+                    break
+
+                graphemes, audio = item
+                pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
+                chunk_text = graphemes if isinstance(graphemes, str) else text
+                yield SynthesizedAudioChunk(
+                    pcm=pcm.tobytes(),
+                    sample_rate=self.config.sample_rate,
+                    text=chunk_text,
+                )
 
 
 class VoiceProfile:
@@ -242,6 +278,20 @@ def _next_chunk(
         return None
 
 
+def _next_kokoro_chunk(
+    iterator: Iterator[tuple[object, object, object]],
+) -> tuple[object, np.ndarray] | None:
+    """Advance Kokoro and retain the graphemes aligned to its audio chunk."""
+    try:
+        graphemes, _phonemes, audio = next(iterator)
+    except StopIteration:
+        return None
+    audio_array = _as_numpy_audio(audio)
+    if audio_array is None:
+        return _next_kokoro_chunk(iterator)
+    return graphemes, audio_array
+
+
 def _as_numpy_audio(audio: object) -> np.ndarray | None:
     """Normalize Kokoro's NumPy or Torch output to a CPU NumPy array."""
     if isinstance(audio, np.ndarray):
@@ -249,6 +299,6 @@ def _as_numpy_audio(audio: object) -> np.ndarray | None:
 
     detach = getattr(audio, "detach", None)
     if callable(detach):
-        return detach().cpu().numpy()
+        return cast(np.ndarray, detach().cpu().numpy())
 
     return None

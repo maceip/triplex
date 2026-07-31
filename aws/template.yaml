@@ -1,231 +1,134 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Triplex Voice Agent - AWS Chime SDK PSTN integration'
+Description: Triplex Chime SIP Lambda and media-event infrastructure
 
 Parameters:
-  PhoneNumber:
+  CodeBucket:
     Type: String
-    Description: Phone number to attach (E.164 format, e.g., +15551234567)
-
-  AssistantVoice:
+    Description: Existing S3 bucket containing the packaged SIP Lambda
+  CodeKey:
     Type: String
-    Default: 'af_heart'
-    Description: Kokoro voice to use (af_heart, am_adam, etc.)
-
+    Default: triplex/sip-handler.zip
+  KvsPoolArn:
+    Type: String
+    AllowedPattern: '^arn:[^:]+:chime:[^:]+:[0-9]{12}:media-pipeline-kinesis-video-stream-pool/.+$'
+    Description: ACTIVE Chime media-pipeline KVS pool ARN in this Region
 Resources:
-  # ============================================================================
-  # Lambda Function for SIP Media Application
-  # ============================================================================
-
-  SipMediaAppFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: triplex-sip-handler
-      Runtime: python3.12
-      Handler: handler.lambda_handler
-      Code:
-        S3Bucket: !Ref CodeBucket
-        S3Key: handler.zip
-      Role: !GetAtt SipMediaAppRole.Arn
-      Timeout: 30
-      MemorySize: 256
-      Environment:
-        Variables:
-          MEDIA_PIPELINE_KVS_STREAM: !Ref AudioStreamName
-          AUDIO_BUCKET: !Ref AudioOutputBucket
-          MEETING_REGION: !Ref AWS::Region
-
-  SipMediaAppRole:
+  SipHandlerRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
+            Principal: {Service: lambda.amazonaws.com}
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: ChimeSDKAccess
+        - PolicyName: ChimeCallResources
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - chime:CreateMeeting
-                  - chime:DeleteMeeting
                   - chime:CreateAttendee
-                  - chime:DeleteAttendee
-                  - kms:Decrypt
+                  - chime:DeleteMeeting
+                  - chime:CreateMediaStreamPipeline
+                  - chime:DeleteMediaPipeline
+                  - chime:TagResource
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
                 Resource: '*'
-              - Effect: Allow
-                Action:
-                  - kinesisvideo:CreateMediaStreamPipeline
-                  - kinesisvideo:DeleteMediaPipeline
-                  - kinesisvideo:DescribeStream
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                Resource: !Sub '${AudioOutputBucket.Arn}/*'
 
-  # ============================================================================
-  # SIP Media Application
-  # ============================================================================
-
-  SipMediaApp:
-    Type: AWS::Chime::SipMediaApplication
+  SipHandler:
+    Type: AWS::Lambda::Function
     Properties:
-      Name: triplex-sip-application
-      Endpoints:
-        - LambdaArn: !GetAtt SipMediaAppFunction.Arn
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt SipHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 50
+      TracingConfig: {Mode: Active}
+      Environment:
+        Variables:
+          MEETING_REGION: !Ref AWS::Region
+          KVS_POOL_ARN: !Ref KvsPoolArn
+          KVS_RESERVED_STREAM_CAPACITY: '2'
 
-  # ============================================================================
-  # SIP Rule (Phone Number → SIP Media App)
-  # ============================================================================
-
-  SipRule:
-    Type: AWS::Chime::SipRule
+  SipHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      Name: triplex-inbound-rule
-      TriggerType: ToPhoneNumber
-      TriggerValue: !Ref PhoneNumber
-      TargetApplications:
-        - SipMediaApplicationId: !Ref SipMediaApp
-          Region: !Ref AWS::Region
+      LogGroupName: !Sub /aws/lambda/${SipHandler}
+      RetentionInDays: 30
 
-  # ============================================================================
-  # Kinesis Video Stream for Audio
-  # ============================================================================
-
-  VideoStream:
-    Type: AWS::KinesisVideo::Stream
+  AllowChimeInvoke:
+    Type: AWS::Lambda::Permission
     Properties:
-      Name: !Ref AudioStreamName
-      DataRetentionInHours: 24
-      DeviceName: triplex-audio-capture
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SipHandler
+      Principal: voiceconnector.chime.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
 
-  # ============================================================================
-  # S3 Bucket for Audio Output
-  # ============================================================================
-
-  AudioOutputBucket:
-    Type: AWS::S3::Bucket
+  CallEventsDeadLetterQueue:
+    Type: AWS::SQS::Queue
     Properties:
-      BucketName: !Sub 'triplex-audio-${AWS::AccountId}'
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldAudio
-            Status: Enabled
-            ExpirationInDays: 1
+      KmsMasterKeyId: alias/aws/sqs
+      MessageRetentionPeriod: 1209600
 
-  # ============================================================================
-  # EC2 Instance for Call Processor
-  # ============================================================================
-
-  CallProcessorInstance:
-    Type: AWS::EC2::Instance
+  CallEventsQueue:
+    Type: AWS::SQS::Queue
     Properties:
-      ImageId: ami-0abcdef1234567890  # Replace with actual AMI
-      InstanceType: g4dn.xlarge  # GPU instance for vLLM
-      KeyName: triplex-key
-      IamInstanceProfile: !Ref CallProcessorProfile
-      SecurityGroupIds:
-        - !Ref CallProcessorSecurityGroup
-      SubnetId: !Ref SubnetId
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          yum update -y
-          yum install -y docker
-          service docker start
-          usermod -a -G docker ec2-user
+      KmsMasterKeyId: alias/aws/sqs
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CallEventsDeadLetterQueue.Arn
+        maxReceiveCount: 5
 
-          # Pull and run the processor
-          docker run -d \
-            -e KVS_STREAM_NAME=${AudioStreamName} \
-            -e AWS_REGION=${AWS::Region} \
-            -e USE_MOCK_LLM=false \
-            triplex-processor:latest
-
-  CallProcessorProfile:
-    Type: AWS::IAM::InstanceProfile
+  ChimeStreamEvents:
+    Type: AWS::Events::Rule
     Properties:
-      Roles:
-        - !Ref CallProcessorRole
+      EventPattern:
+        source: [aws.chime]
+        detail-type: [Chime Media Pipeline State Change]
+        detail:
+          eventType:
+            - chime:MediaPipelineKinesisVideoStreamStart
+            - chime:MediaPipelineKinesisVideoStreamEnd
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CallEventsQueue.Arn
+          Id: triplex-call-events
+          DeadLetterConfig: {Arn: !GetAtt CallEventsDeadLetterQueue.Arn}
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 3600
+            MaximumRetryAttempts: 10
 
-  CallProcessorRole:
-    Type: AWS::IAM::Role
+  CallEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
     Properties:
-      AssumeRolePolicyDocument:
+      Queues: [!Ref CallEventsQueue, !Ref CallEventsDeadLetterQueue]
+      PolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: KVSAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - kinesisvideo:GetMedia
-                  - kinesisvideo:DescribeStream
-                  - kinesisvideo:ListStreams
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - chime:CreateMeeting
-                  - chime:DeleteMeeting
-                  - chime:CreateAttendee
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                Resource: !Sub '${AudioOutputBucket.Arn}/*'
-
-  CallProcessorSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for call processor
-      VpcId: !Ref VpcId
-
-Parameters:
-  AudioStreamName:
-    Type: String
-    Default: triplex-audio-stream
-    Description: Name for the Kinesis Video Stream
-
-  CodeBucket:
-    Type: String
-    Description: S3 bucket containing Lambda code
-
-  VpcId:
-    Type: AWS::EC2::Vpc::Id
-    Description: VPC for the call processor instance
-
-  SubnetId:
-    Type: AWS::EC2::Subnet::Id
-    Description: Subnet for the call processor instance
+            Principal: {Service: events.amazonaws.com}
+            Action: sqs:SendMessage
+            Resource:
+              - !GetAtt CallEventsQueue.Arn
+              - !GetAtt CallEventsDeadLetterQueue.Arn
+            Condition:
+              ArnEquals: {aws:SourceArn: !GetAtt ChimeStreamEvents.Arn}
 
 Outputs:
-  SipMediaAppId:
-    Description: SIP Media Application ID
-    Value: !Ref SipMediaApp
-
-  PhoneNumber:
-    Description: Provisioned phone number
-    Value: !Ref PhoneNumber
-
-  AudioStreamName:
-    Description: Kinesis Video Stream name
-    Value: !Ref AudioStreamName
-
-  CallProcessorInstanceId:
-    Description: EC2 instance ID for call processor
-    Value: !Ref CallProcessorInstance
+  SipHandlerArn:
+    Value: !GetAtt SipHandler.Arn
+  CallEventsQueueUrl:
+    Value: !Ref CallEventsQueue
+  CallEventsQueueArn:
+    Value: !GetAtt CallEventsQueue.Arn

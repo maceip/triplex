@@ -4,7 +4,7 @@ Fast inference with streaming token generation.
 
 Requirements:
 - vLLM>=0.6.0
-- CUDA GPU (or Apple Silicon with MPS fallback)
+- CUDA GPU
 - Llama 3 8B weights
 
 Install: pip install vllm
@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
-from typing import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
 try:
-    from vllm import LLM, SamplingParams
+    from vllm import SamplingParams
     from vllm.engine.arg_utils import EngineArgs
     from vllm.engine.async_llm_engine import AsyncLLMEngine
 
@@ -27,7 +29,7 @@ except ImportError:
     HAS_VLLM = False
 
     # Stubs for type hints when vLLM not installed
-    class SamplingParams:
+    class SamplingParams:  # type: ignore[no-redef]
         pass
 
 
@@ -36,6 +38,7 @@ class ReasoningConfig:
     """Configuration for the reasoning engine."""
 
     model: str = "meta-llama/Meta-Llama-3-8B-Instruct"
+    model_revision: str = "8afb486c1db24fe5011ec46dfbe5b5dccdb575c2"
     max_tokens: int = 150  # Voice responses should be concise
     temperature: float = 0.7
     top_p: float = 0.9
@@ -84,12 +87,13 @@ class VLLMEngine:
         if not HAS_VLLM:
             raise ImportError(
                 "vLLM required: pip install vllm\n"
-                "Requires CUDA GPU or Apple Silicon with MPS support."
+                "Requires a supported CUDA GPU."
             )
 
         self.config = config or ReasoningConfig()
         self._engine: AsyncLLMEngine | None = None
         self._initialized = False
+        self._active_request_ids: set[str] = set()
 
     def initialize(self) -> None:
         """Initialize vLLM engine (expensive, do once)."""
@@ -98,6 +102,7 @@ class VLLMEngine:
 
         engine_args = EngineArgs(
             model=self.config.model,
+            revision=self.config.model_revision,
             gpu_memory_utilization=self.config.gpu_memory_utilization,
             max_model_len=self.config.max_model_len,
             # Disable logging for cleaner output
@@ -111,7 +116,7 @@ class VLLMEngine:
     async def generate_stream(
         self,
         prompt: str,
-        conversation_history: list[dict] | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[TokenChunk]:
         """Generate response tokens as a stream.
 
@@ -147,10 +152,12 @@ class VLLMEngine:
         start_time = time.perf_counter()
         tokens_generated = 0
 
+        request_id = uuid.uuid4().hex
+        self._active_request_ids.add(request_id)
         try:
             # Stream results
             async for output in self._engine.generate(  # type: ignore
-                formatted_prompt, sampling_params, request_id=str(time.time())
+                formatted_prompt, sampling_params, request_id=request_id
             ):
                 # output is a RequestOutput
                 if output.outputs:
@@ -165,18 +172,31 @@ class VLLMEngine:
                         tokens_generated=tokens_generated,
                         latency_ms=elapsed_ms,
                     )
+        except asyncio.CancelledError:
+            await self._engine.abort(request_id)  # type: ignore[union-attr]
+            raise
         except Exception as e:
             # On error, yield nothing - caller should handle
             raise RuntimeError(f"LLM generation failed: {e}") from e
+        finally:
+            self._active_request_ids.discard(request_id)
 
-    async def generate(self, prompt: str, conversation_history: list[dict] | None = None) -> str:
+    def new_session(self) -> VLLMSession:
+        """Create call-scoped cancellation state over the shared model engine."""
+        return VLLMSession(self)
+
+    async def generate(
+        self,
+        prompt: str,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         """Generate complete response (non-streaming convenience method)."""
         complete_text = ""
         async for chunk in self.generate_stream(prompt, conversation_history):
             complete_text = chunk.text
         return complete_text
 
-    def _format_chat(self, messages: list[dict]) -> str:
+    def _format_chat(self, messages: list[dict[str, Any]]) -> str:
         """Format messages using Llama 3 chat template.
 
         Llama 3 format:
@@ -201,14 +221,82 @@ class VLLMEngine:
 
     async def abort(self) -> None:
         """Abort current generation (for interruption handling)."""
-        # vLLM doesn't have a clean abort API per request
-        # The engine handles this internally when we stop iterating
-        pass
+        if self._engine is None:
+            return
+        request_ids = tuple(self._active_request_ids)
+        if request_ids:
+            await asyncio.gather(
+                *(self._engine.abort(request_id) for request_id in request_ids)
+            )
+            self._active_request_ids.difference_update(request_ids)
 
     def teardown(self) -> None:
         """Cleanup engine resources."""
         # vLLM handles cleanup on exit
         self._initialized = False
+
+
+class VLLMSession:
+    """Per-call vLLM facade so barge-in never aborts another caller."""
+
+    def __init__(self, engine: VLLMEngine) -> None:
+        self._parent = engine
+        self.config = engine.config
+        self._active_request_ids: set[str] = set()
+
+    def initialize(self) -> None:
+        self._parent.initialize()
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[TokenChunk]:
+        if not self._parent._initialized:
+            self._parent.initialize()
+        engine = self._parent._engine
+        if engine is None:
+            raise RuntimeError("vLLM initialization did not create an engine")
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.config.system_prompt}
+        ]
+        if conversation_history:
+            messages.extend(conversation_history)
+        messages.append({"role": "user", "content": prompt})
+        sampling_params = SamplingParams(
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            repetition_penalty=self.config.repetition_penalty,
+        )
+        request_id = uuid.uuid4().hex
+        self._active_request_ids.add(request_id)
+        start_time = time.perf_counter()
+        try:
+            async for output in engine.generate(
+                self._parent._format_chat(messages),
+                sampling_params,
+                request_id=request_id,
+            ):
+                if output.outputs:
+                    yield TokenChunk(
+                        text=output.outputs[0].text,
+                        is_final=output.finished,
+                        tokens_generated=len(output.outputs[0].token_ids),
+                        latency_ms=(time.perf_counter() - start_time) * 1000,
+                    )
+        except asyncio.CancelledError:
+            await engine.abort(request_id)
+            raise
+        finally:
+            self._active_request_ids.discard(request_id)
+
+    async def abort(self) -> None:
+        request_ids = tuple(self._active_request_ids)
+        engine = self._parent._engine
+        if engine is not None and request_ids:
+            await asyncio.gather(*(engine.abort(item) for item in request_ids))
+            self._active_request_ids.difference_update(request_ids)
 
 
 # Fallback for development/testing without vLLM
@@ -217,12 +305,18 @@ class MockReasoningEngine:
 
     def __init__(self, config: ReasoningConfig | None = None):
         self.config = config or ReasoningConfig()
+        self._aborted = False
 
     async def generate_stream(
-        self, prompt: str, conversation_history: list[dict] | None = None
+        self,
+        prompt: str,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[TokenChunk]:
         """Fake streaming with pre-canned responses."""
+        self._aborted = False
         await asyncio.sleep(0.1)  # Simulate latency
+        if self._aborted:
+            return
 
         responses = {
             "hello": "Hi there! How can I help you today?",
@@ -242,6 +336,8 @@ class MockReasoningEngine:
 
         for i, word in enumerate(words):
             await asyncio.sleep(0.02)  # Simulate token generation time
+            if self._aborted:
+                return
             text += (" " if text else "") + word
 
             yield TokenChunk(
@@ -251,12 +347,24 @@ class MockReasoningEngine:
                 latency_ms=(i + 1) * 20,
             )
 
-    async def generate(self, prompt: str, conversation_history: list[dict] | None = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         """Non-streaming generate."""
         final_text = ""
         async for chunk in self.generate_stream(prompt, conversation_history):
             final_text = chunk.text
         return final_text
+
+    async def abort(self) -> None:
+        """Stop the active deterministic generation."""
+        self._aborted = True
+
+    def new_session(self) -> MockReasoningEngine:
+        """Return isolated interruption state for a simulated call."""
+        return MockReasoningEngine(self.config)
 
 
 def get_reasoning_engine(use_mock: bool = False) -> VLLMEngine | MockReasoningEngine:

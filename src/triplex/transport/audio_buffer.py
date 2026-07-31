@@ -8,9 +8,8 @@ Twilio uses mu-law 8kHz by default. We need to:
 
 from __future__ import annotations
 
-import struct
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 import numpy as np
 
@@ -53,8 +52,6 @@ def _init_mulaw_tables() -> None:
     if _MU_LAW_TABLE:
         return
 
-    # Mu-law compression table
-    MU = 255.0
     for i in range(256):
         # Decode mu-law to linear
         # Complement all bits
@@ -131,7 +128,7 @@ def resample(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
         ratio = to_rate / from_rate
         new_length = int(len(audio) * ratio)
         indices = np.linspace(0, len(audio) - 1, new_length)
-        return np.interp(indices, np.arange(len(audio)), audio)
+        return np.asarray(np.interp(indices, np.arange(len(audio)), audio))
 
     # Use scipy for quality resampling
     num_samples = int(len(audio) * to_rate / from_rate)
@@ -141,7 +138,7 @@ def resample(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
     if audio.dtype == np.int16:
         resampled = resampled.clip(-32768, 32767).astype(np.int16)
 
-    return resampled
+    return np.asarray(resampled)
 
 
 class AudioChunker:
@@ -225,8 +222,9 @@ class AudioOutputBuffer:
 
             if len(self._buffer[0]) <= remaining:
                 # Take entire buffered chunk
-                chunk[chunk_pos : chunk_pos + len(self._buffer[0])] = self._buffer.pop(0)
-                chunk_pos += len(self._buffer[-1]) if self._buffer else chunk_pos
+                buffered = self._buffer.pop(0)
+                chunk[chunk_pos : chunk_pos + len(buffered)] = buffered
+                chunk_pos += len(buffered)
             else:
                 # Take partial chunk
                 chunk[chunk_pos:] = self._buffer[0][:remaining]

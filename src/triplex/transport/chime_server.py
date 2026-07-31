@@ -49,14 +49,17 @@ References:
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
+
 # Lambda event types from Chime SDK
-class ChimeEventType(str, Enum):
+class ChimeEventType(StrEnum):
     NEW_INBOUND_CALL = "NEW_INBOUND_CALL"
+    ACTION_SUCCESSFUL = "ACTION_SUCCESSFUL"
+    ACTION_FAILED = "ACTION_FAILED"
+    DIGITS_RECEIVED = "DIGITS_RECEIVED"
     CALL_ANSWERED = "CALL_ANSWERED"
     CALL_UPDATED = "CALL_UPDATED"
     HANGUP = "HANGUP"
@@ -72,6 +75,11 @@ class ChimeCallDetails:
     from_number: str
     to_number: str
     call_direction: str  # "Inbound" or "Outbound"
+    transaction_id: str = ""
+    aws_account_id: str = ""
+    aws_region: str = ""
+    sip_application_id: str = ""
+    transaction_attributes: dict[str, str] | None = None
 
 
 @dataclass
@@ -83,19 +91,25 @@ class ChimeEvent:
     raw_event: dict[str, Any]
 
     @classmethod
-    def from_lambda_event(cls, event: dict[str, Any]) -> "ChimeEvent":
+    def from_lambda_event(cls, event: dict[str, Any]) -> ChimeEvent:
         """Parse Lambda event from Chime SDK."""
         event_type = ChimeEventType(event.get("InvocationEventType", ""))
 
         call_details_raw = event.get("CallDetails", {})
         participants = call_details_raw.get("Participants", [{}])
+        participant = participants[0] if participants else {}
 
         call_details = ChimeCallDetails(
-            call_id=call_details_raw.get("CallId", ""),
-            participant_id=participants[0].get("ParticipantId", "") if participants else "",
-            from_number=participants[0].get("From", "") if participants else "",
-            to_number=participants[0].get("To", "") if participants else "",
-            call_direction=call_details_raw.get("CallDirection", "Inbound"),
+            call_id=participant.get("CallId", ""),
+            participant_id=participant.get("ParticipantId", ""),
+            from_number=participant.get("From", ""),
+            to_number=participant.get("To", ""),
+            call_direction=participant.get("Direction", "Inbound"),
+            transaction_id=call_details_raw.get("TransactionId", ""),
+            aws_account_id=call_details_raw.get("AwsAccountId", ""),
+            aws_region=call_details_raw.get("AwsRegion", ""),
+            sip_application_id=call_details_raw.get("SipApplicationId", ""),
+            transaction_attributes=call_details_raw.get("TransactionAttributes", {}),
         )
 
         return cls(
@@ -211,12 +225,18 @@ def action_stop_call_recording(call_id: str) -> dict[str, Any]:
     }
 
 
-def build_response(actions: list[dict[str, Any]]) -> dict[str, Any]:
+def build_response(
+    actions: list[dict[str, Any]],
+    transaction_attributes: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Build Lambda response for Chime SDK."""
-    return {
+    response: dict[str, Any] = {
         "SchemaVersion": "1.0",
         "Actions": actions,
     }
+    if transaction_attributes is not None:
+        response["TransactionAttributes"] = transaction_attributes
+    return response
 
 
 # Lambda handler template
@@ -247,7 +267,11 @@ def lambda_handler_template(event: dict[str, Any], context: Any) -> dict[str, An
         # Step 3: Join the meeting (bridges PSTN to meeting)
         # This is where we get real-time audio access!
         return build_response([
-            action_join_chime_meeting("meeting-attendee-join-token-here"),
+            action_join_chime_meeting(
+                "meeting-attendee-join-token-here",
+                chime_event.call_details.call_id,
+                "meeting-id-here",
+            ),
         ])
 
     elif chime_event.event_type == ChimeEventType.HANGUP:
@@ -261,7 +285,11 @@ def lambda_handler_template(event: dict[str, Any], context: Any) -> dict[str, An
     return build_response([])
 
 
-def action_join_chime_meeting(join_token: str) -> dict[str, Any]:
+def action_join_chime_meeting(
+    join_token: str,
+    call_id: str,
+    meeting_id: str,
+) -> dict[str, Any]:
     """Join a Chime meeting - bridges PSTN call to meeting.
 
     This is THE KEY ACTION for real-time audio access.
@@ -272,6 +300,9 @@ def action_join_chime_meeting(join_token: str) -> dict[str, Any]:
         "Type": "JoinChimeMeeting",
         "Parameters": {
             "JoinToken": join_token,
+            "CallId": call_id,
+            "ParticipantTag": "LEG-A",
+            "MeetingId": meeting_id,
         },
     }
 

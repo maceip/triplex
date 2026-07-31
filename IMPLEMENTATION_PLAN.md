@@ -1,487 +1,217 @@
-# Triplex v2 Implementation Plan
+# Triplex implementation and release plan
 
-## Architecture Overview
+Last implementation pass: 2026-07-31
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         TRIPLEX v2                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                    TRANSPORT LAYER                            │  │
-│  │  WebRTC (UDP) + Opus @ 24kHz + AEC3                          │  │
-│  │  • Raw PCM streaming (20ms chunks)                           │  │
-│  │  • Echo cancellation (subtract outgoing TTS from mic)        │  │
-│  │  • Jitter buffer management                                   │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                              │                                      │
-│                              ▼                                      │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │               TIER 1: REFLEX LAYER (< 100ms)                 │  │
-│  │                                                               │  │
-│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │  │
-│  │  │ Silero VAD  │───▶│ Quantized   │───▶│ Decision    │      │  │
-│  │  │ (20ms chunks)│    │ BERT/Intent │    │ Router      │      │  │
-│  │  └─────────────┘    └─────────────┘    └─────────────┘      │  │
-│  │                                               │               │  │
-│  │                    ┌──────────────────────────┼───────────┐  │  │
-│  │                    ▼                          ▼           ▼  │  │
-│  │               BACKCHANNEL            INTERRUPTION    FILLER  │  │
-│  │               (ignore)               (tear-down)    (inject) │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                              │                                      │
-│                              ▼ (if needs response)                  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              TIER 2: REASONING ENGINE (vLLM)                 │  │
-│  │                                                               │  │
-│  │  • Llama 3 8B or Qwen 2.5 (quantized)                        │  │
-│  │  • Streaming token generation                                │  │
-│  │  • Tool/API calls for business logic                         │  │
-│  │  • Context window management                                 │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                              │                                      │
-│                              ▼ (streaming tokens)                   │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              TIER 3: SYNTHESIZER (Dual Engine)               │  │
-│  │                                                               │  │
-│  │  PHASE 1: Kokoro-82M                                         │  │
-│  │  • Decoder-only, 82M params                                  │  │
-│  │  • Branded voice (offline fine-tuned embedding)             │  │
-│  │  • ~50-100ms TTFA                                            │  │
-│  │                                                               │  │
-│  │  PHASE 2: Qwen3-TTS / CosyVoice 2                           │  │
-│  │  • Zero-shot voice cloning                                   │  │
-│  │  • 97-150ms streaming latency                                │  │
-│  │  • Reference audio → cloned voice                            │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                              │                                      │
-│                              ▼                                      │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              INTERRUPTION HANDLER (< 50ms)                   │  │
-│  │                                                               │  │
-│  │  1. Flush WebRTC jitter buffer (stop audio instantly)        │  │
-│  │  2. Kill signal to LLM (halt generation)                     │  │
-│  │  3. Truncate context to last spoken word                     │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+## Objective
+
+Deliver the four requested capabilities without mocked production behavior:
+echo cancellation, real Chime/KVS media, sub-50 ms interruption teardown, and
+dynamic zero-shot voice cloning. Keep live infrastructure/model validation as
+explicit release gates so code completion is never confused with deployment
+truth.
+
+## Deployed architecture
+
+```text
+PSTN
+  -> Chime SIP rule
+  -> SIP media application Lambda
+       create meeting + caller attendee + IndividualAudio media pipeline
+       return JoinChimeMeeting
+  -> Chime meeting
+       caller audio -> Chime-managed KVS pool
+       agent audio <- Chime SDK JS custom MediaStream attendee
+  -> EventBridge start/end -> encrypted SQS + DLQ
+  -> GPU call processor
+       KVS MKV/AAC -> decode -> AEC -> VAD -> ASR -> vLLM -> dual TTS
+       PCM -> authenticated local WebSocket -> AudioWorklet -> Chime meeting
 ```
 
-## Deployment Context
-
-**Target platforms**:
-1. **Server (CUDA GPU)** - Business call center, full model inference
-2. **Desktop/Laptop (Apple Silicon)** - Development, small business
-3. **Mobile (Android/iOS)** - Consumer app, on-device inference
-
-**Call entrance**: AWS Chime SDK
-
-**Real-time audio path** (discovered from AWS docs):
-```
-PSTN Call → SIP Media App (Lambda) → JoinChimeMeeting → Chime Meeting
-                                                              │
-                                                              ▼
-                                              Media Stream Pipeline
-                                                              │
-                                                              ▼
-                                               Kinesis Video Streams
-                                                              │
-                                                              ▼
-                                                   Our Pipeline (VAD/LLM/TTS)
-```
-
-This is the key insight: **JoinChimeMeeting bridges PSTN calls into meetings where we get real-time audio access via Media Stream Pipelines**.
-
-## Phase 1: Core Infrastructure
-
-### 1.1 Transport Layer
-**Goal**: Raw audio streaming with echo cancellation
-
-**AWS Chime SDK Architecture**:
-```
-PSTN Call → SIP Media App (Lambda) → JoinChimeMeeting → Chime Meeting
-                                                              │
-                                                              ▼
-                                              Media Stream Pipeline
-                                                              │
-                                                              ▼
-                                               Kinesis Video Streams
-                                                              │
-                                                              ▼
-                                                   Our Pipeline (VAD/LLM/TTS)
-```
-
-**Key insight**: `JoinChimeMeeting` bridges PSTN calls into meetings, enabling real-time audio access via Media Stream Pipelines to Kinesis Video Streams.
-
-**Components**:
-- Lambda handler for SIP Media Application events
-- KVS consumer for audio ingestion
-- Audio output back to meeting
-- Echo cancellation (AEC3 or speexdsp)
-- PCM chunk processing (20ms @ 16kHz)
-
-**Files**:
-```
-src/triplex/transport/
-├── __init__.py
-├── chime_server.py     # SIP Media App Lambda handler
-├── kvs_consumer.py     # Kinesis Video Streams reader
-├── audio_buffer.py     # PCM chunk management, mu-law conversion
-└── echo_canceller.py   # AEC integration
-```
-
-**Status**:
-- ✅ `chime_server.py` - Architecture documented, action builders implemented
-- ⏳ `kvs_consumer.py` - Needs implementation
-- ⏳ `echo_canceller.py` - Needs implementation
-
-### 1.2 Tier 1 Reflex Layer
-**Goal**: < 100ms intent classification and barge-in detection
-
-**Components**:
-- Silero VAD (already have code in `audio/vad.py`)
-- Quantized BERT for intent classification
-- Decision router for backchannel/interrupt/filler
-
-**Files**:
-```
-src/triplex/reflex/
-├── __init__.py
-├── vad_processor.py   # Silero on 20ms chunks
-├── intent_classifier.py # Quantized BERT
-├── decision_router.py # Backchannel/Interrupt/Filler logic
-└── filler_injector.py # Synthetic "hmm" injection
-```
-
-### 1.3 Tier 3 Synthesizer (Kokoro-82M)
-**Goal**: < 100ms TTFA for branded voice
-
-**Status**: ✅ WORKING
-
-**Components**:
-- Kokoro-82M model
-- Pre-loaded voice embedding
-- Streaming audio output
-
-**Files**:
-```
-src/triplex/synthesis/
-├── __init__.py
-├── kokoro_engine.py   # Kokoro-82M wrapper ✅
-├── voice_embeddings.py # Voice management (future)
-└── audio_output.py    # Stream to meeting (needs wiring)
-```
-
-**Performance** (verified):
-- TTFA: ~130ms for 3-second audio
-- Quality: Good with `af_heart` voice
-- Streaming: Supported via generator
-
-## Phase 2: Reasoning Engine
-
-### 2.1 Tier 2 LLM Integration
-**Goal**: Streaming text generation from local model
-
-**Status**: ✅ vLLM engine scaffolded, needs testing with GPU
-
-**Components**:
-- vLLM server (local)
-- Llama 3 8B or Qwen 2.5 (quantized)
-- Streaming token output
-- Tool calling for API access
-
-**Files**:
-```
-src/triplex/reasoning/
-├── __init__.py
-├── vllm_engine.py     # vLLM integration ✅
-├── stream_decoder.py  # Token → TTS pipeline (in pipeline.py)
-├── tool_executor.py   # API calls (future)
-└── context_manager.py # Conversation state (in pipeline.py)
-```
-
-### 2.2 Interruption Handler
-**Goal**: < 50ms tear-down cascade
-
-**Components**:
-- WebRTC buffer flush
-- LLM kill signal
-- Context truncation
-
-**Files**:
-```
-src/triplex/interruption/
-├── __init__.py
-├── tear_down.py       # The cascade logic
-└── state_alignment.py # Context truncation
-```
-
-## Phase 3: Voice Cloning (Week 3)
-
-### 3.1 Zero-Shot TTS
-**Goal**: Dynamic customer voice cloning
-
-**Components**:
-- Qwen3-TTS or CosyVoice 2
-- Reference audio handling
-- Streaming output
-
-**Files**:
-```
-src/triplex/synthesis/
-├── zero_shot_engine.py # Qwen3-TTS / CosyVoice
-├── voice_cloner.py     # Reference audio → voice
-└── dual_router.py      # Kokoro vs Zero-shot routing
-```
-
-## Dependencies
-
-### Pip Installable
-```
-# Transport
-aiortc>=1.6.0
-opuslib>=3.0.0
-webrtc-audio-processing  # if available, else speexdsp
-
-# VAD
-webrtcvad>=2.0.10
-
-# TTS Phase 1
-kokoro>=0.9.2
-
-# TTS Phase 2 (zero-shot)
-# CosyVoice or Qwen3-TTS - check availability
-
-# LLM
-vllm>=0.6.0
-transformers>=4.46.0
-
-# Audio
-torch>=2.2.0
-torchaudio>=2.2.0
-soundfile>=0.12.0
-numpy>=1.26.0
-```
-
-### System Dependencies
-```
-# macOS
-brew install opus
-brew install portaudio
-
-# For AEC (may need to build from source)
-# webrtc-audio-processing
-```
-
-## Keep vs Rebuild
-
-### KEEP (with modifications)
-| Component | Current | Modification |
-|-----------|---------|--------------|
-| VAD | `audio/vad.py` | Wire into reflex layer |
-| Gatekeeper | `gate/gatekeeper.py` | Replace with quantized BERT, or keep as intent classifier |
-
-### REBUILD
-| Component | Why |
-|-----------|-----|
-| Transport | New - WebRTC/Opus/AEC |
-| Reflex Layer | New architecture |
-| TTS | Replace Parler-TTS with Kokoro-82M |
-| LLM | Wire vLLM (currently mock) |
-| Interruption | New - tear-down cascade |
-
-### REMOVE
-| Component | Why |
-|-----------|-----|
-| `response/tiered.py` | Replaced by reflex layer |
-| `response/tts.py` | Replaced by Kokoro engine |
-| `audio/synthesis.py` | Replaced |
-| `agent/compliance.py` | Not needed for this use case |
-
-## Milestone 1 Target
-
-**Working prototype with**:
-1. FastAPI server handling Twilio webhooks
-2. WebSocket media stream (receive audio, send response)
-3. Silero VAD detecting speech in real-time
-4. Kokoro-82M generating "Hello" response (< 100ms TTFA)
-5. End-to-end latency measurement
-
-**Test method**: Call Twilio number → our server → "Hello" response
-
-This validates the core pipeline before adding LLM.
-
-## Implementation Order
-
-1. **Transport** - Twilio server, media stream, echo cancellation
-2. **Tier 1 Reflex** - VAD + intent classifier (keep existing gatekeeper or upgrade to BERT)
-3. **Tier 3 TTS** - Kokoro-82M integration
-4. **Tier 2 LLM** - vLLM + Llama 3 8B
-5. **Interruption** - Tear-down cascade
-
-## Code Migration
-
-### Keep (with adaptation)
-- `gate/gatekeeper.py` → Use as intent classifier in Tier 1, or replace with quantized BERT
-- `audio/vad.py` → Wire into reflex layer
-
-### Archive (move to `_old/`)
-- `response/tiered.py` - Different architecture now
-- `response/tts.py` - Replaced by Kokoro
-- `audio/synthesis.py` - Replaced
-- `agent/compliance.py` - Not needed
-
-### New directories
-- `transport/` - Twilio server, media stream
-- `reflex/` - Tier 1 logic
-- `reasoning/` - Tier 2 LLM
-- `synthesis/` - Tier 3 TTS
-- `interruption/` - Tear-down cascade
-
----
-
-## Confirmed Requirements
-
-| Requirement | Decision |
-|-------------|----------|
-| Deployment | Server (CUDA) + Desktop (Apple Silicon) + Mobile |
-| Call entrance | Twilio Voice SDK (WebSocket signaling) |
-| Voice cloning | Phase 1 only (MVP = branded voice) |
-| LLM | Llama 3 8B with vLLM |
-
-## Architecture Reality (AWS Chime SDK)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CALLER                                  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      AWS CHIME SDK                              │
-│  • PSTN gateway (Voice Connector)                              │
-│  • SIP Media Application (Lambda)                              │
-│  • JoinChimeMeeting → Meeting bridge                           │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 MEDIA STREAM PIPELINE                           │
-│  • Audio capture from meeting                                  │
-│  • Kinesis Video Streams output                                │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    OUR PIPELINE                                 │
-│                                                                 │
-│  1. KVS consumer (audio in)                                    │
-│  2. VAD (Silero)                                               │
-│  3. LLM (vLLM + Llama 3 8B)                                    │
-│  4. TTS (Kokoro-82M)                                           │
-│  5. Audio back to meeting                                      │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Current Status
-
-| Layer | Status | Notes |
-|-------|--------|-------|
-| Transport | ⏳ | chime_server.py scaffolded, needs KVS consumer |
-| Tier 1 VAD | ✅ | Silero VAD working |
-| Tier 1 Reflex | ⚠️ | Logic exists, not connected |
-| Tier 2 LLM | ✅ | vLLM engine scaffolded |
-| Tier 3 TTS | ✅ | Kokoro-82M working (~130ms TTFA) |
-| Pipeline | ✅ | pipeline.py created, wires layers together |
-| ASR | ❌ | Need Whisper integration |
-| AEC | ❌ | Need echo cancellation |
-
-## Deployment
-
-### Prerequisites
-1. AWS account with Chime SDK enabled
-2. Phone number provisioned (request via AWS Support)
-3. CUDA GPU instance (g4dn.xlarge or equivalent)
-
-### Deploy Infrastructure
-
-```bash
-# 1. Package Lambda code
-cd src/triplex/transport
-zip -r handler.zip sip_media_app/
-aws s3 cp handler.zip s3://triplex-code/handler.zip
-
-# 2. Deploy CloudFormation stack
-aws cloudformation create-stack \
-  --stack-name triplex-voice-agent \
-  --template-body file://aws/template.yaml \
-  --parameters \
-      ParameterKey=PhoneNumber,ParameterValue=+15551234567 \
-      ParameterKey=CodeBucket,ParameterValue=triplex-code \
-      ParameterKey=VpcId,ParameterValue=vpc-xxx \
-      ParameterKey=SubnetId,ParameterValue=subnet-xxx \
-  --capabilities CAPABILITY_IAM
-
-# 3. Build and push Docker image
-docker build -t triplex-processor .
-docker tag triplex-processor:latest 123456789.dkr.ecr.us-east-1.amazonaws.com/triplex-processor:latest
-docker push 123456789.dkr.ecr.us-east-1.amazonaws.com/triplex-processor:latest
-```
-
-### Architecture
-
-```
-Caller → PSTN → Chime Voice Connector → SIP Media App → Lambda
-                                                          │
-                                                          ▼
-                                                  JoinChimeMeeting
-                                                          │
-                                                          ▼
-                                              Chime SDK Meeting
-                                                          │
-                                                          ▼
-                                             Media Stream Pipeline
-                                                          │
-                                                          ▼
-                                          Kinesis Video Streams (KVS)
-                                                          │
-                                                          ▼
-                                              EC2 GPU Instance
-                                              ┌─────────────────┐
-                                              │ - KVS Consumer  │
-                                              │ - VAD (Silero)  │
-                                              │ - ASR (Whisper) │
-                                              │ - LLM (vLLM)    │
-                                              │ - TTS (Kokoro)  │
-                                              └─────────────────┘
-                                                          │
-                                                          ▼
-                                             Audio back to meeting
-                                                          │
-                                                          ▼
-                                                Caller hears response
-```
-
-### Latency Budget
-| Component | Target | Notes |
-|-----------|--------|-------|
-| Audio capture (KVS) | <20ms | Stream latency |
-| VAD | <10ms | Silero on GPU |
-| ASR | <100ms | Whisper small.en |
-| LLM first token | <100ms | vLLM + Llama 3 8B |
-| TTS first chunk | <100ms | Kokoro-82M |
-| Audio output | <20ms | Meeting injection |
-| **TOTAL** | **<350ms** | Target: <300ms |
-
-## Next Four Features
-
-1. **Echo cancellation (AEC)** - Subtract outgoing Triplex speech from incoming call audio so the agent does not hear itself. Needs implementation.
-2. **Live Chime/KVS media integration** - Replace the KVS scaffold with real frame parsing, continuous call-audio ingress, and response-audio egress to the Chime meeting.
-3. **Barge-in and interruption teardown** - Stop queued audio and in-flight generation within 50 ms, then align conversation state with exactly what the caller heard.
-4. **Dynamic zero-shot voice cloning** - Add the later Qwen3-TTS/CosyVoice path and route between the fast branded Kokoro voice and customer-specific voices.
-
-### Validation Gates (Not Additional Features)
-
-- Deploy and complete a live Chime call through KVS ingress and meeting-audio egress.
-- Run the real vLLM reasoning path on supported CUDA hardware.
-- Measure time to first audio, interruption teardown, and full end-to-end latency against the sub-300 ms target.
+One `VoicePipeline` is allocated per call. Model weights are shared where safe;
+vLLM cancellation state is call-scoped so one caller's barge-in cannot abort
+another caller's request.
+
+## Item 1: echo cancellation — implemented
+
+Files:
+
+- `src/triplex/transport/echo_canceller.py`
+- `src/triplex/pipeline.py`
+- `tests/test_echo_canceller.py`
+
+Contract:
+
+- Signed 16-bit mono PCM in and out at 20 ms boundaries.
+- Outgoing audio enters a thread-safe far-end FIFO only after transport commit.
+- A normalized adaptive filter learns delayed/multipath correlated echo.
+- Near-end double-talk freezes adaptation instead of suppressing the caller.
+- Interruption flushes stale reference audio; a call reset clears coefficients.
+- ERLE, input/reference/residual power, and adaptation state are observable.
+
+Evidence:
+
+- The synthetic delayed multipath regression requires greater than 20 dB ERLE.
+- FIFO pairing and double-talk protection have dedicated tests.
+- A local 200-frame run measured 0.906 ms median, 0.995 ms p95, and 1.404 ms
+  maximum processing time per 20 ms frame.
+
+Release tuning:
+
+- `echo_delay_ms` exists because PSTN/meeting round-trip delay must be calibrated
+  from a real call; the synthetic test does not establish the production value.
+
+## Item 2: live Chime/KVS media — implemented
+
+Files:
+
+- `src/triplex/transport/mkv.py`
+- `src/triplex/transport/kvs_consumer.py`
+- `src/triplex/transport/sip_media_app/handler.py`
+- `src/triplex/transport/call_processor.py`
+- `src/triplex/transport/meeting_gateway.py`
+- `src/triplex/transport/chime_meeting.py`
+- `web/meeting_audio_bridge/`
+- `aws/template.yaml`
+- `aws/processor-template.yaml`
+- `scripts/provision_chime.py`
+
+Ingress guarantees:
+
+- `GetMedia` is treated as persistent Matroska, never raw PCM.
+- The incremental EBML parser tolerates arbitrary network splits and repeated
+  KVS fragment headers, captures AAC codec configuration, handles supported
+  lacing, and captures continuation tokens.
+- AAC access units are decoded through FFmpeg/PyAV, downmixed to mono, and
+  resampled before entering the fixed 16 kHz/20 ms PCM pipeline.
+- Audio is downmixed/resampled/rechunked to fixed 16 kHz/20 ms PCM frames.
+- Recoverable GetMedia failures reconnect with bounded exponential backoff.
+
+Call orchestration guarantees:
+
+- Only `caller-*` IndividualAudio lifecycle events are admitted; the agent's
+  own KVS stream is ignored.
+- Starts are idempotent, ends cancel their exact task, and SQS is deleted only
+  after Chime egress admission succeeds. Malformed/failed admissions reach the
+  DLQ through normal redelivery.
+- Each output attendee is created through the Chime meetings API.
+
+Egress guarantees:
+
+- Python sends framed PCM through an authenticated, ephemeral gateway session.
+- A pinned Amazon Chime SDK JS client joins as an attendee and supplies an
+  `AudioWorklet`-backed custom `MediaStream` as its audio input.
+- The worklet reports cumulative samples actually played and returns the exact
+  PCM boundary when a generation is flushed.
+- Gateway credentials and producer/browser tokens are scoped per call; Chrome
+  sandbox disabling is opt-in rather than the default.
+
+Deployment guarantees:
+
+- The core and processor CloudFormation templates pass AWS validation and
+  `cfn-lint` with no findings.
+- Chime resources absent from CloudFormation are provisioned idempotently via
+  their documented APIs.
+- Event routing uses encrypted SQS, a DLQ, retries, and least-scope runtime
+  roles. Runtime model/gateway secrets come from Secrets Manager.
+- SIP join failures and hangups clean up both the media pipeline and meeting.
+
+## Item 3: interruption teardown — implemented
+
+Files:
+
+- `src/triplex/interruption/tear_down.py`
+- `src/triplex/interruption/state_alignment.py`
+- `src/triplex/pipeline.py`
+- `src/triplex/reasoning/vllm_engine.py`
+- `web/meeting_audio_bridge/src/pcm-worklet.js`
+- `tests/test_interruption.py`
+
+Contract:
+
+- Ingress/VAD continues while LLM and TTS generation are active.
+- Confirmed caller speech cancels the current generation task.
+- Local queued PCM, the exact call-scoped vLLM request, and browser playout are
+  flushed concurrently under a 50 ms deadline.
+- The browser flush acknowledgement is an exact played-sample boundary.
+- Only fully played synthesizer segments are retained. Partial segments are
+  conservatively omitted because neither Kokoro nor the high-level Qwen clone
+  API supplies trustworthy word timestamps.
+- No generated-but-unplayed assistant text survives in conversation history.
+
+Evidence:
+
+- The regression requires model abort, one transport flush, retained text only
+  from the fully played segment, and measured teardown below 50 ms.
+- A 200-trigger local coordinator run measured 0.049 ms median, 0.064 ms p95,
+  0.087 ms p99, and 0.111 ms maximum before real network/browser latency.
+
+## Item 4: dynamic zero-shot voice cloning — implemented
+
+Files:
+
+- `src/triplex/synthesis/qwen3_tts_engine.py`
+- `src/triplex/synthesis/dual_router.py`
+- `tests/test_voice_cloning.py`
+
+Contract:
+
+- The later engine is Qwen3-TTS Base, loaded only when clone mode is configured.
+- CUDA uses FlashAttention 2 when that optional kernel is installed and the
+  model's authentic manual PyTorch attention path otherwise.
+- A clone profile requires a speaker ID, consent ID, timezone-aware verification
+  time, verbatim reference text, and a local 16-bit mono PCM WAV.
+- Reference duration is constrained to 3–30 seconds and the file is SHA-256
+  hashed for audit records.
+- Model-specific clone prompts are cached and generation is serialized around
+  the shared model instance.
+- The router selects branded Kokoro or a named clone per call. Missing clone
+  dependencies/profiles fail closed; they never fall back to Kokoro silently.
+- The default call worker loads clone mode only when `VOICE_MODE=cloned` and all
+  required local reference and consent metadata pass validation at startup.
+- Since Qwen's high-level clone API returns audio without word timestamps,
+  interrupted partial clone output is conservatively excluded from history.
+
+Evidence:
+
+- Tests cover consent rejection, reference validation/hash/prompt caching,
+  generated PCM chunking, explicit routing, and no-fallback behavior using an
+  injected model object rather than a fake production branch.
+
+## Validation record
+
+Completed in this checkout:
+
+- Python: 24 tests pass.
+- Ruff: all implementation/test/deployment Python files pass.
+- CloudFormation: both templates pass AWS `validate-template` and `cfn-lint`.
+- Browser bridge: TypeScript bundle succeeds; production and full npm audits
+  report zero vulnerabilities.
+- Linux/CUDA dependency resolution succeeds for Python 3.12; the CUDA 13.0.2
+  base image manifest exists for both amd64 and arm64.
+- The Linux dependency graph is locked for the processor image; model IDs and
+  immutable model revisions are pinned. Current upstream advisory exceptions
+  and their unreachable-surface controls are recorded in `SECURITY.md`.
+- The installed Qwen3-TTS 0.1.1 API matches the adapter; its real 0.6B Base
+  model initialized on local MPS, cached a 4.55-second Kokoro reference prompt,
+  and generated 61,440 finite samples at 24 kHz through the clone path.
+- Packaging: the wheel contains the runtime, call worker, and all three gateway
+  static assets; the SIP Lambda zip contains only its two required modules.
+- AEC: synthetic ERLE exceeds 20 dB and local p95 DSP time is below 1 ms.
+- Interruption: deterministic regression is below the 50 ms deadline.
+
+Release gates still requiring external prerequisites:
+
+1. Provision a Chime SDK PSTN phone number and ACTIVE KVS pool, deploy both
+   stacks, and complete a real caller-audio ingress plus agent-audio egress call.
+2. Build/run the image on supported NVIDIA hardware and exercise the real vLLM
+   path. The local Apple Silicon host has no CUDA device and its Docker daemon
+   is currently unavailable.
+3. On that live path, collect p50/p95/p99 for KVS capture, ASR, first vLLM token,
+   first audio, interruption, and end-to-end caller-heard latency. The original
+   sub-300 ms target remains a target until those measurements exist.
+4. Calibrate PSTN echo delay and rerun ERLE/double-talk measurements on captured,
+   consented test calls.
+
+The configured AWS account was inspected read-only: it currently has no Chime
+phone numbers, SIP media applications, KVS pools/streams, or GPU instances. No
+live-call or CUDA result should be inferred from the local passing suite.
