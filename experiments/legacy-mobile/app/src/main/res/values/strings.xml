@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Triplex Dialer</string>
+    <string name="dialer_title">Triplex Dialer</string>
+    <string name="in_call_title">Call in progress</string>
+    <string name="call_log_title">Call Log</string>
+    <string name="settings_title">Settings</string>
+    <string name="end_call">End call</string>
+    <string name="mute">Mute</string>
+    <string name="speaker">Speaker</string>
+    <string name="place_call">Call</string>
+    <string name="triplex_agent_call">Triplex Agent Call</string>
+    <string name="capability_echo">Echo Cancellation</string>
+    <string name="capability_chime">Chime Meeting</string>
+    <string name="capability_interruption">Barge-In</string>
+    <string name="capability_clone">Voice Clone</string>
+</resources>

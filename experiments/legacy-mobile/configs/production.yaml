@@ -1,0 +1,40 @@
+# Triplex Production Configuration
+
+agent:
+  disclosure_timeout_seconds: 3.0
+  max_call_duration_seconds: 300
+  escalation_enabled: true
+
+audio:
+  sample_rate: 16000
+  mel_bins: 128
+  max_frames: 3000
+
+compliance:
+  disclose_automation: true
+  announce_recording: true
+  wait_for_consent: true
+
+models:
+  inherent:
+    path: null  # Will use default search paths
+    backend: onnx
+
+  llm:
+    backend: mock  # Options: openai_gpt4o_audio, gemini_live, local_ollama, mock
+    model: gpt-4o-audio-preview
+    temperature: 0.7
+    max_tokens: 500
+
+tasks:
+  appointment_booking:
+    enabled: true
+    max_turns: 20
+
+  reservation:
+    enabled: true
+    max_turns: 15
+
+  inquiry:
+    enabled: true
+    max_turns: 10
