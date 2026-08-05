@@ -70,4 +70,4 @@ Track disposition of all imported code with evidence and reasoning. Prevent reje
 - Before production deployment
 
 ---
-_Governed by UNIFICATION_PLAN.md_
+_Governed by `UNIFICATION_PLAN.md`_

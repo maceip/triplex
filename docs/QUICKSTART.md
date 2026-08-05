@@ -31,7 +31,7 @@ PYTHONPATH=src python -m triplex.runtime
 Mocks are test-only and opt-in through `USE_MOCK_ASR=true` and
 `USE_MOCK_LLM=true`. The defaults are the real faster-whisper and vLLM paths.
 See [README.md](README.md) for deployment order and
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for validation status.
+[`IMPLEMENTATION_PLAN.md`](`IMPLEMENTATION_PLAN.md`) for validation status.
 
 Cloned-voice mode is explicit and fail-closed. Set `VOICE_MODE=cloned` plus the
 six consent/profile variables documented in the README and mount the local
