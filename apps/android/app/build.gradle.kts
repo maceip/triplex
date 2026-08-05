@@ -125,6 +125,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
 
     implementation(libs.timber)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

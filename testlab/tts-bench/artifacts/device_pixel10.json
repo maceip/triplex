@@ -1,0 +1,13 @@
+{
+  "device": "Pixel 10 Pro Fold, Android 17 (API 37), arm64-v8a",
+  "runtime": "ONNX Runtime 1.20.0 Android, CPU execution provider",
+  "model": "owensong/Inflect-Micro-v2-ONNX (bundled as APK asset, 37.7 MB)",
+  "decision_rule": "RTF > 1.5 and first chunk < 300 ms on device",
+  "results": [
+    {"turn": "short",  "tokens": 32,  "audio_s": 1.28, "synth_ms": 210.4,  "rtf_4t": 6.08, "rtf_1t": 3.62},
+    {"turn": "medium", "tokens": 96,  "audio_s": 3.43, "synth_ms": 570.7,  "rtf_4t": 6.02, "rtf_1t": 3.54},
+    {"turn": "long",   "tokens": 192, "audio_s": 6.72, "synth_ms": 1168.2, "rtf_4t": 5.75, "rtf_1t": 3.48}
+  ],
+  "verdict": "PASS - branded slot ships on-device",
+  "date": "2026-08-05"
+}

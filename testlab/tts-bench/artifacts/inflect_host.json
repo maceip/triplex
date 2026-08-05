@@ -1,0 +1,68 @@
+{
+  "model": "owensong/Inflect-Micro-v2-ONNX",
+  "host": "Apple Silicon, ONNX Runtime CPU provider",
+  "note": "Host reference only. The decision rule applies to on-device measurement; this validates the harness and bounds expectations.",
+  "created_utc": "2026-08-05T04:05:04.189195+00:00",
+  "results": [
+    {
+      "threads": 1,
+      "turn": "short",
+      "tokens": 32,
+      "audio_seconds": 1.152,
+      "synth_seconds": 0.2425,
+      "rtf": 4.75,
+      "duration_stage_ms": 0.8,
+      "decode_stage_ms": 241.7
+    },
+    {
+      "threads": 1,
+      "turn": "medium",
+      "tokens": 96,
+      "audio_seconds": 3.328,
+      "synth_seconds": 0.7127,
+      "rtf": 4.67,
+      "duration_stage_ms": 2.4,
+      "decode_stage_ms": 710.3
+    },
+    {
+      "threads": 1,
+      "turn": "long",
+      "tokens": 192,
+      "audio_seconds": 6.635,
+      "synth_seconds": 1.438,
+      "rtf": 4.61,
+      "duration_stage_ms": 4.8,
+      "decode_stage_ms": 1433.2
+    },
+    {
+      "threads": 4,
+      "turn": "short",
+      "tokens": 32,
+      "audio_seconds": 1.152,
+      "synth_seconds": 0.0741,
+      "rtf": 15.54,
+      "duration_stage_ms": 0.8,
+      "decode_stage_ms": 73.3
+    },
+    {
+      "threads": 4,
+      "turn": "medium",
+      "tokens": 96,
+      "audio_seconds": 3.328,
+      "synth_seconds": 0.21,
+      "rtf": 15.85,
+      "duration_stage_ms": 1.7,
+      "decode_stage_ms": 208.3
+    },
+    {
+      "threads": 4,
+      "turn": "long",
+      "tokens": 192,
+      "audio_seconds": 6.635,
+      "synth_seconds": 0.423,
+      "rtf": 15.69,
+      "duration_stage_ms": 3.1,
+      "decode_stage_ms": 419.9
+    }
+  ]
+}
