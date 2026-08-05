@@ -70,6 +70,12 @@ pub struct TurnConfig {
     pub min_one_way_ns: i64,
     /// Uncertainty margin above the floor (§3.6).
     pub heard_margin_ns: i64,
+    /// How long YIELDING waits for the mixer flush acknowledgement before
+    /// committing conservative heard-state anyway. The deadline bounds the
+    /// state machine, never the flush: cancellation has already been
+    /// published and continues regardless (retired Python contract,
+    /// `test_deadline_does_not_cancel_abort_or_remote_flush`).
+    pub flush_ack_deadline_ns: i64,
     pub history_cap: usize,
 }
 
@@ -80,6 +86,9 @@ impl Default for TurnConfig {
             endpoint_slow_ns: 250_000_000,
             min_one_way_ns: 20_000_000,
             heard_margin_ns: 60_000_000,
+            // The retired pipeline held teardown to 50 ms; the mixer drops
+            // stale frames within one 10 ms period, so this is generous.
+            flush_ack_deadline_ns: 50_000_000,
             history_cap: 1024,
         }
     }
@@ -108,8 +117,11 @@ pub struct TurnController<'a, 'm, S: TurnSink> {
     pending_onset_ns: i64,
     yield_old_epoch: u32,
     yield_to_epoch: u32,
+    yield_deadline_ns: i64,
     user_speaking: bool,
     pub hist_overflows: u64,
+    /// Barge-ins where the flush acknowledgement never arrived in time.
+    pub flush_ack_timeouts: u64,
 }
 
 impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
@@ -135,8 +147,10 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
             pending_onset_ns: 0,
             yield_old_epoch: 0,
             yield_to_epoch: 0,
+            yield_deadline_ns: i64::MAX,
             user_speaking: false,
             hist_overflows: 0,
+            flush_ack_timeouts: 0,
         }
     }
 
@@ -156,13 +170,20 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
             self.on_status(status);
         }
         while let Some(event) = self.wiring.vad_rx.pop() {
-            self.on_vad(event);
+            self.on_vad(event, now_ns);
         }
         while let Some(event) = self.wiring.asr_rx.pop() {
             self.on_asr(event, now_ns);
         }
         if self.state == TurnState::Endpointing && now_ns >= self.endpoint_deadline_ns {
             self.commit_turn();
+        }
+        // A mixer that never acknowledges must not wedge the FSM. Cancellation
+        // was already published at barge-in and is unaffected by this; only
+        // the wait for confirmation is bounded.
+        if self.state == TurnState::Yielding && now_ns >= self.yield_deadline_ns {
+            self.flush_ack_timeouts += 1;
+            self.finish_barge_in();
         }
     }
 
@@ -220,7 +241,7 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
         }
     }
 
-    fn on_vad(&mut self, event: VadEvent) {
+    fn on_vad(&mut self, event: VadEvent, now_ns: i64) {
         match event {
             VadEvent::Onset(onset) => {
                 self.user_speaking = true;
@@ -228,7 +249,7 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
                     // §2.2: onset during ENDPOINTING closes the window; same
                     // epoch, speculation self-invalidates via rev.
                     TurnState::Endpointing => self.state = TurnState::Listening,
-                    TurnState::Committed | TurnState::Speaking => self.barge_in(onset),
+                    TurnState::Committed | TurnState::Speaking => self.barge_in(onset, now_ns),
                     _ => {}
                 }
             }
@@ -278,7 +299,7 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
     }
 
     /// §3.4 publication order.
-    fn barge_in(&mut self, onset: SpeechOnset) {
+    fn barge_in(&mut self, onset: SpeechOnset, now_ns: i64) {
         let old = self.epoch.current_epoch();
         let new = self.epoch.bump_epoch(); // (1) broadcast + (3) mixer flush
         self.doorbells.ring_all(); // (2)
@@ -286,6 +307,7 @@ impl<'a, 'm, S: TurnSink> TurnController<'a, 'm, S> {
         self.pending_onset_ns = onset.mono_ns;
         self.yield_old_epoch = old;
         self.yield_to_epoch = new;
+        self.yield_deadline_ns = now_ns + self.cfg.flush_ack_deadline_ns;
         self.spec_rev = None;
         self.state = TurnState::Yielding; // (5)
     }
@@ -577,6 +599,47 @@ mod tests {
         assert!(heard[0].interrupted);
         assert_eq!(heard[0].heard_samples, 0);
         assert!(heard[0].reopen_segment, "nothing heard ⇒ reopen user segment");
+    }
+
+    /// A mixer that never acknowledges the flush must not wedge the FSM.
+    /// Ported from the retired Python contract
+    /// (`test_deadline_does_not_cancel_abort_or_remote_flush`): the deadline
+    /// bounds the wait, never the cancellation, which was already published.
+    #[test]
+    fn missing_flush_ack_still_commits_conservative_heard_state() {
+        let fx = Fixture::new();
+        let epoch = EpochDomain::new(&fx.media);
+        let bell = Doorbell::new();
+        fx.bells.register(&bell).unwrap();
+        let mut turn = fx.controller(&epoch);
+
+        let rev = stable_partial(&fx, &epoch);
+        turn.sink_mut().final_rev = rev;
+        turn.poll(0);
+        turn.poll(90 * MS);
+        fx.status
+            .push(MixerStatus::FirstAudio { epoch: 1, mono_ns: 0 })
+            .unwrap();
+        turn.poll(91 * MS);
+        assert_eq!(turn.state(), TurnState::Speaking);
+
+        fx.vad
+            .push(VadEvent::Onset(SpeechOnset { mono_ns: 95 * MS, conf: 0.9 }))
+            .unwrap();
+        turn.poll(96 * MS);
+        assert_eq!(turn.state(), TurnState::Yielding);
+        // Cancellation is already published and stays published.
+        assert_eq!(epoch.current_epoch(), 2);
+        assert!(bell.is_rung());
+
+        // No FlushAck ever arrives; the deadline releases the FSM.
+        turn.poll(100 * MS);
+        assert_eq!(turn.state(), TurnState::Yielding, "still inside the deadline");
+        turn.poll(96 * MS + TurnConfig::default().flush_ack_deadline_ns);
+        assert_eq!(turn.state(), TurnState::Listening, "deadline released YIELDING");
+        assert_eq!(turn.flush_ack_timeouts, 1);
+        assert_eq!(turn.sink_mut().heard.len(), 1, "heard-state still committed");
+        assert!(turn.sink_mut().heard[0].interrupted);
     }
 
     #[test]

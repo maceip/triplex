@@ -147,6 +147,20 @@ impl<'a, 'm, M: TtsModel, C: Clock> TtsHost<'a, 'm, M, C> {
             .synth_chunk(&item.text, &mut self.pcm_buf, &mut self.marks_buf);
         let samples = out.samples.min(MAX_CHUNK_SAMPLES);
 
+        // A chunk-end mark is emitted unconditionally, so heard-state degrades
+        // to whole-segment retention when an engine cannot supply trustworthy
+        // word timestamps. Kokoro and the high-level Qwen clone API cannot;
+        // the retired Python pipeline resolved this by dropping partial
+        // segments outright (IMPLEMENTATION_PLAN.md Item 3). Marks are a
+        // lower bound on granularity: the last mark at or before the heard
+        // watermark is always a safe retention point, whether it marks a word
+        // or a whole segment.
+        let chunk_end = AlignmentMark {
+            epoch: token.epoch,
+            utt_sample_off: self.utt_sample_off + samples as u64,
+            text_off: self.utt_text_off + item.text.len() as u32,
+        };
+
         // Publish marks before audio so heard-state can resolve any frame
         // the pump egresses immediately (§3.6).
         for mark in &self.marks_buf[..out.marks.min(MAX_CHUNK_MARKS)] {
@@ -158,6 +172,14 @@ impl<'a, 'm, M: TtsModel, C: Clock> TtsHost<'a, 'm, M, C> {
             if self.marks_tx.push(absolute).is_err() {
                 self.marks_dropped += 1;
             }
+        }
+        // Skip when the model already marked the chunk boundary, so an engine
+        // with real word marks does not emit a duplicate at the same offset.
+        let already_marked = self.marks_buf[..out.marks.min(MAX_CHUNK_MARKS)]
+            .last()
+            .is_some_and(|last| u64::from(last.sample_off) == samples as u64);
+        if !already_marked && self.marks_tx.push(chunk_end).is_err() {
+            self.marks_dropped += 1;
         }
 
         let mut offset = 0_usize;
