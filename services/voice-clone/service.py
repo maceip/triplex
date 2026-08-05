@@ -36,9 +36,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "services"))
 
-from triplex.synthesis.qwen3_tts_engine import (  # noqa: E402
+from voice_models.qwen3_tts_engine import (  # noqa: E402
     Qwen3TTSEngine,
     VoiceCloneProfile,
 )

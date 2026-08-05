@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "services"))
 
 WORK = Path(__file__).resolve().parent / "artifacts" / "diagnose"
 CLEAN = REPO / "testlab/voice-clone-demo/artifacts/smoke/reference_kokoro_af_heart.wav"
@@ -75,7 +75,7 @@ def add_noise(pcm: np.ndarray, snr_db: float) -> np.ndarray:
 
 def _trial(reference: str, ref_text: str, queue: mp.Queue) -> None:
     from datetime import datetime as dt
-    from triplex.synthesis.qwen3_tts_engine import Qwen3TTSEngine, VoiceCloneProfile
+    from voice_models.qwen3_tts_engine import Qwen3TTSEngine, VoiceCloneProfile
 
     engine = Qwen3TTSEngine()
     engine.initialize()
