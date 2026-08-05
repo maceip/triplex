@@ -1,3 +1,8 @@
+# SUPERSEDED-BY: RUNTIME_INVARIANTS.md §7.4, §3.2
+# RETIRED: this module does not ship and is not maintained.
+# Its contract was ported; see DISPOSITION_LEDGER.md. Read for
+# reference only — do not extend, and do not treat as a fallback.
+
 """Streaming acoustic echo cancellation for full-duplex calls.
 
 The canceller consumes the microphone signal (near end) together with the audio

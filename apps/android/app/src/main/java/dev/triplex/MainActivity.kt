@@ -10,7 +10,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
-import dev.triplex.control.TurnController
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.repository.UserRepository
 import dev.triplex.nativebridge.agent.AgentBridge
@@ -34,8 +33,6 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var telephonyController: TelephonyController
     
-    @Inject
-    lateinit var turnController: TurnController
 
     @Inject
     lateinit var agentBridge: AgentBridge
@@ -90,9 +87,6 @@ class MainActivity : ComponentActivity() {
                         Timber.i("Native runtime ready, device: $deviceId")
                         
                         telephonyController.initialize()
-                        telephonyController.getAudioPipeline()?.let { pipeline ->
-                            turnController.initialize(pipeline)
-                        }
                         userRepository.syncSipCredentials()
                         if (!telephonyController.registerSip()) {
                             Timber.w(
@@ -114,7 +108,6 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) {
             runCatching { unregisterReceiver(demoReceiver) }
         }
-        turnController.stopProcessing()
         agentBridge.stop()
         telephonyController.shutdown()
         runtimeManager.shutdown()

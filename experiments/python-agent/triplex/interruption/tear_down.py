@@ -1,3 +1,8 @@
+# SUPERSEDED-BY: RUNTIME_INVARIANTS.md §7.1, §7.2
+# RETIRED: this module does not ship and is not maintained.
+# Its contract was ported; see DISPOSITION_LEDGER.md. Read for
+# reference only — do not extend, and do not treat as a fallback.
+
 """Sub-50 ms barge-in tear-down orchestration."""
 
 from __future__ import annotations

@@ -1,3 +1,8 @@
+# SUPERSEDED-BY: RUNTIME_INVARIANTS.md §7.5
+# RETIRED: this module does not ship and is not maintained.
+# Its contract was ported; see DISPOSITION_LEDGER.md. Read for
+# reference only — do not extend, and do not treat as a fallback.
+
 """Tier 1 Reflex Layer - Fast response decision making.
 
 Handles conversational physics:

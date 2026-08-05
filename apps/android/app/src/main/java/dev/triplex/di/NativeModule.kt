@@ -6,7 +6,6 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import dev.triplex.control.TurnController
 import dev.triplex.nativebridge.runtime.NativeRuntime
 import dev.triplex.telephony.sip.TelephonyController
 import javax.inject.Singleton
@@ -31,9 +30,4 @@ object NativeModule {
         return TelephonyController(context, secureStorage, runtime)
     }
     
-    @Provides
-    @Singleton
-    fun provideTurnController(): TurnController {
-        return TurnController()
-    }
 }

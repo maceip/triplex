@@ -1,3 +1,8 @@
+# SUPERSEDED-BY: RUNTIME_INVARIANTS.md §3.1 (agent-core::vad)
+# RETIRED: this module does not ship and is not maintained.
+# Its contract was ported; see DISPOSITION_LEDGER.md. Read for
+# reference only — do not extend, and do not treat as a fallback.
+
 """Voice Activity Detection (VAD).
 
 Detects when the recipient is speaking vs silence/noise.

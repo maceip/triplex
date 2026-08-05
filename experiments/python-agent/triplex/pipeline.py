@@ -1,3 +1,8 @@
+# SUPERSEDED-BY: apps/android/agent (agent-core::session)
+# RETIRED: this module does not ship and is not maintained.
+# Its contract was ported; see DISPOSITION_LEDGER.md. Read for
+# reference only — do not extend, and do not treat as a fallback.
+
 """Concurrent full-duplex Triplex voice pipeline.
 
 Incoming audio remains live while LLM and TTS tasks run, which is required for

@@ -9,7 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import dev.triplex.control.TurnController
+import dev.triplex.nativebridge.agent.AgentState
 import dev.triplex.telephony.sip.CallStateInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,7 +87,7 @@ fun ActiveCallScreen(
 @Composable
 fun CallStatusCard(
     callState: CallStateInfo,
-    turnState: TurnController.TurnState,
+    turnState: AgentState,
     epoch: Long
 ) {
     Card(

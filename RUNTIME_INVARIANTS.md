@@ -257,6 +257,25 @@ The SIP stack (PJSIP/Linphone) keeps its own threads; the adapter attaches at th
 - **Latency CI:** the harness replays recorded PSTN traces plus device-lab calls and asserts the plan's p95 table (callback→enqueue 5 ms, onset→decision 40 ms, onset→silence 150 ms, dropped/duplicated frames = 0, queued audio ≤ 60 ms). A regression fails the build; a slow baseline does not move the bar.
 - **Ledger replay:** every barge-in in test produces a heard-state proof (ledger slice + alignment marks) checked against the ground-truth stimulus — the evidence artifact the plan requires before anything is called production-ready.
 
+## 7. Contracts inherited from the retired Python pipeline
+
+These were established with evidence before this runtime existed. The code is
+retired (`experiments/python-agent/`, see `DISPOSITION_LEDGER.md`); the
+contracts bind. Each cites its origin so the reasoning stays recoverable.
+
+**7.1 Teardown deadline bounds the wait, never the cancellation.**
+*(`interruption/tear_down.py`, `tests/test_interruption.py::test_deadline_does_not_cancel_abort_or_remote_flush`)* — Teardown completes under 50 ms, but a deadline that expires must **not** abandon an in-flight abort or remote flush; it reports conservative state and lets the cancellation finish. §2.2's YIELDING therefore carries `flush_ack_deadline_ns`: it releases the FSM and commits heard-state, while the epoch bump and doorbells — already published — are untouched. Without this a stalled mixer wedges the machine permanently.
+
+**7.2 Exactly one flush per barge-in.** *(same test)* — A barge-in produces one flush publication, not zero and not several. §3.4's single `interrupt()` per publication satisfies this; re-entrant onsets while YIELDING must not republish.
+
+**7.3 Retain only what was fully rendered.** *(`interruption/state_alignment.py`)* — Neither Kokoro nor the high-level Qwen clone API supplies trustworthy word timestamps, so the retired pipeline retained only fully played synthesizer segments. §3.6 generalises this: alignment marks are a **lower bound on granularity**, with a chunk-end mark emitted unconditionally, so an engine without word marks degrades exactly to whole-segment retention. No generated-but-unplayed assistant text ever survives in history.
+
+**7.4 Echo delay is a calibrated, not assumed, quantity.** *(`transport/echo_canceller.py`)* — `echo_delay_ms` existed because PSTN and meeting round-trip delay must be measured on a real call; synthetic tests do not establish the production value. §3.2's far-echo lag window (40–400 ms) is a starting range, not a verified constant, and must be calibrated against real PSTN evidence before release. That module also demonstrated adaptation must **freeze during double-talk** rather than suppress the caller — the same principle as never flushing the capture plane (§0).
+
+**7.5 Reflex taxonomy.** *(`reflex/engine.py`)* — Conversational physics decisions are backchannel (ignore "uh-huh" while speaking), barge-in (trigger teardown), and filler injection (buy time), under 100 ms. §2.2's reflex acknowledgement path implements the third; the first is why §3.1 requires k-consecutive confirmation rather than a single frame.
+
+**7.6 Cloned voice is consent-gated and fails closed.** *(`synthesis/qwen3_tts_engine.py`, `synthesis/dual_router.py`)* — A voice profile requires a speaker id, consent id, timezone-aware verification time, verbatim reference text, and a local 3–30 s mono 16-bit WAV, SHA-256 hashed for audit. Engine selection is explicit per call: **a missing clone profile or dependency fails closed and never silently downgrades to the branded voice**, because a silent substitution is a consent and correctness bug. This binds the `TtsModel` selection in the native runtime, not just the retired router.
+
 ## Deferred to spikes
 
 Exact VAD θ/k constants per device tier; PJSIP vs Linphone adapter surface; LiteRT cancellation-checkpoint granularity vs decode-step cost; takeover-mode device-audio pool topology.

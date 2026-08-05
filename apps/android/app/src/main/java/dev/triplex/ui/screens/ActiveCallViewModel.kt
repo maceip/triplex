@@ -3,49 +3,52 @@ package dev.triplex.ui.screens
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.triplex.control.TurnController
+import dev.triplex.nativebridge.agent.AgentBridge
+import dev.triplex.nativebridge.agent.AgentState
 import dev.triplex.telephony.sip.CallStateInfo
 import dev.triplex.telephony.sip.TelephonyController
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Live call state for the UI.
+ *
+ * Turn state is *observed* from the native agent session, never computed
+ * here: the turn FSM has exactly one implementation, in Rust
+ * (`agent-core::turn`). A second Kotlin state machine would drift from the
+ * epoch the mixer actually gates on.
+ */
 @HiltViewModel
 class ActiveCallViewModel @Inject constructor(
     private val telephonyController: TelephonyController,
-    private val turnController: TurnController
+    private val agentBridge: AgentBridge
 ) : ViewModel() {
-    
+
     val callState: StateFlow<CallStateInfo> = telephonyController.callState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CallStateInfo.Idle)
-    
-    val turnState: StateFlow<TurnController.TurnState> = turnController.turnState
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TurnController.TurnState.IDLE)
-    
-    val currentEpoch: StateFlow<Long> = MutableStateFlow(telephonyController.getCurrentEpoch())
-    
-    init {
-        viewModelScope.launch {
-            callState.collect { state ->
-                turnController.handleCallState(state)
-            }
-        }
-    }
-    
+
+    val turnState: StateFlow<AgentState> = agentBridge.status
+        .map { it.state }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AgentState.STOPPED)
+
+    /** Generation epoch from the native runtime — the single source of truth. */
+    val currentEpoch: StateFlow<Long> = agentBridge.status
+        .map { it.epoch }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
     fun hangup() {
         telephonyController.hangup()
     }
-    
+
     fun mute() {
-        // TODO: Implement mute via audio pipeline
+        // TODO: route through the native mixer once takeover mode exists.
     }
-    
+
+    /** Manual barge-in: publishes an epoch bump in the native runtime. */
     fun interrupt() {
-        val epoch = telephonyController.getCurrentEpoch()
-        turnController.injectInterruption("User requested", epoch)
+        agentBridge.interrupt("User requested")
     }
 }
