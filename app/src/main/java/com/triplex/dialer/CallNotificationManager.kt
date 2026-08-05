@@ -33,7 +33,7 @@ object CallNotificationManager {
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(call.displayLabel())
-            .setContentText(call.isIncoming -> "Incoming call" else "Call in progress")
+            .setContentText(if (call.isIncoming) "Incoming call" else "Call in progress")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setAutoCancel(false)

@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
  *
  * Bridges TriplexClient state into Compose UI state.
  * Handles dial input, call placement, mute/speaker toggles.
+ * Manages incoming call detection and voice clone setup.
  */
 class DialerViewModel(private val triplexClient: TriplexClient) : ViewModel() {
 
@@ -34,12 +35,68 @@ class DialerViewModel(private val triplexClient: TriplexClient) : ViewModel() {
     var interruptionDeadlineMs: Long = Constants.INTERRUPTION_DEADLINE_MS.toLong()
         private set
 
+    /** Incoming call detection — the receiver sets this, UI navigates. */
+    private val _incomingCallId = MutableStateFlow<String?>(null)
+    val incomingCallId: StateFlow<String?> = _incomingCallId
+
+    /** Voice clone enabled state. */
+    var voiceCloneEnabled: Boolean = false
+        private set
+
     init {
         viewModelScope.launch {
             triplexClient.capabilities.collect { caps ->
                 _uiState.value = _uiState.value.copy(triplexReady = true)
             }
         }
+        // Monitor CallRepository for incoming calls
+        viewModelScope.launch {
+            CallRepository.callFlow.collect { call: CallData ->
+                if (call.isIncoming && !call.isTriplexAgent) {
+                    _incomingCallId.value = call.id
+                    _uiState.value = _uiState.value.copy(
+                        activeCalls = _uiState.value.activeCalls + call,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Called when user navigates to IncomingCallScreen. */
+    fun onIncomingCallSeen(callId: String) {
+        _incomingCallId.value = null
+        // Start Triplex handling
+        val call = CallRepository.resolveCall(callId)
+        if (call != null) {
+            triplexClient.handleIncomingCall(call)
+        }
+    }
+
+    /** Transfer an incoming call to the user. */
+    fun transferIncomingToUser(callId: String) {
+        val call = CallRepository.resolveCall(callId)
+        if (call != null) {
+            triplexClient.transferToUser(call)
+        }
+    }
+
+    /** End an incoming call that Triplex was handling. */
+    fun endIncomingCall(callId: String) {
+        val call = CallRepository.resolveCall(callId)
+        if (call != null) {
+            triplexClient.endCall(call)
+            CallRepository.removeCall(callId)
+        }
+        _uiState.value = _uiState.value.copy(
+            activeCalls = _uiState.value.activeCalls.filter { it.id != callId },
+            isInCall = false,
+        )
+    }
+
+    /** Toggle voice clone on/off. */
+    fun toggleVoiceClone(enabled: Boolean) {
+        voiceCloneEnabled = enabled
+        // Forward to TriplexClient voice synthesis
     }
 
     fun onDialDigit(digit: Char) {

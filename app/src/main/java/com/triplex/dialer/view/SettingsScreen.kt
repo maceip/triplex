@@ -2,6 +2,7 @@ package com.triplex.dialer.view
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +21,7 @@ import com.triplex.dialer.viewModel.DialerViewModel
 fun SettingsScreen(
     viewModel: DialerViewModel,
     onBack: () -> Unit,
+    onVoiceCloneSetup: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -27,23 +29,22 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
+            modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Echo cancellation section
+            // Echo delay calibration
             Text("Echo Cancellation", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
             Text(
-                "Calibrated delay: ${viewModel.echoDelayMs}ms",
+                "Echo delay: ${viewModel.echoDelayMs}ms",
                 style = MaterialTheme.typography.bodyMedium,
             )
-
             Spacer(Modifier.height(16.dp))
 
             // Voice cloning section
@@ -53,6 +54,17 @@ fun SettingsScreen(
                 "Clone profiles: ${viewModel.cloneProfiles.size}",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onVoiceCloneSetup,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                ),
+            ) {
+                Icon(Icons.Filled.RecordVoiceOver, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Set up Voice Clone")
+            }
 
             Spacer(Modifier.height(16.dp))
 

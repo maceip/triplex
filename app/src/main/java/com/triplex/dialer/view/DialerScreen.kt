@@ -2,6 +2,7 @@ package com.triplex.dialer.view
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -95,6 +96,7 @@ private fun DialerContent(
         // Triplex ready indicator
         if (uiState.triplexReady) {
             AssistChip(
+                onClick = { },
                 label = { Text("Triplex Voice Engine Ready") },
                 leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null) },
                 colors = AssistChipDefaults.assistChipColors(
@@ -168,7 +170,7 @@ private fun NumberPad(
             Spacer(Modifier.height(8.dp))
         }
         IconButton(onClick = onBackspace) {
-            Icon(Icons.Filled.Backspace, contentDescription = "Delete")
+            Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = "Delete")
         }
     }
 }

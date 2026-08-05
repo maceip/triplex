@@ -2,11 +2,14 @@ package com.triplex.dialer.view
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.triplex.dialer.model.*
@@ -76,76 +79,141 @@ private fun InCallContent(
     onEndCall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    // Triplex session — null = no Triplex call active
+    // Starts as INTENT_COLLECT when user initiates Triplex support
+    var triplexSession by remember { mutableStateOf<TriplexCallSession?>(null) }
+
+    // Show Triplex call button if no session active
+    val showTriplexButton = triplexSession == null && call?.isTriplexAgent == true
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
     ) {
-        // Call status
-        if (call != null) {
-            Text(
-                text = formatDuration(call.elapsedSeconds()),
-                fontSize = 40.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = call.state.name,
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            )
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        // Triplex Capability Dashboard
-        CapabilityDashboard(caps)
-
-        Spacer(Modifier.height(24.dp))
-
-        // Call controls
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+        // ─── Main call controls (top) ───
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Mute
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FilledIconButton(
-                    onClick = onToggleMute,
-                    colors = if (isMuted) ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                    ) else ButtonDefaults.buttonColors(),
-                ) {
-                    Icon(
-                        if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-                        contentDescription = "Mute",
-                    )
-                }
-                Text("Mute", fontSize = 12.sp)
+            // Call status
+            if (call != null) {
+                Text(
+                    text = formatDuration(call.elapsedSeconds()),
+                    fontSize = 40.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = call.state.name,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                )
             }
 
-            // Speaker
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FilledIconButton(onClick = onToggleSpeaker) {
-                    Icon(
-                        if (isSpeakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown,
-                        contentDescription = "Speaker",
-                    )
+            Spacer(Modifier.height(24.dp))
+
+            // Triplex Capability Dashboard
+            CapabilityDashboard(caps)
+
+            Spacer(Modifier.height(24.dp))
+
+            // Call controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                // Mute
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    FilledIconButton(
+                        onClick = onToggleMute,
+                        colors = if (isMuted) IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                        ) else IconButtonDefaults.filledIconButtonColors(),
+                    ) {
+                        Icon(
+                            if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                            contentDescription = "Mute",
+                        )
+                    }
+                    Text("Mute", fontSize = 12.sp)
                 }
-                Text("Speaker", fontSize = 12.sp)
+
+                // Speaker
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    FilledIconButton(onClick = onToggleSpeaker) {
+                        Icon(
+                            if (isSpeakerOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeDown,
+                            contentDescription = "Speaker",
+                        )
+                    }
+                    Text("Speaker", fontSize = 12.sp)
+                }
+
+                // End call
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    FilledIconButton(
+                        onClick = onEndCall,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) {
+                        Icon(Icons.Filled.CallEnd, contentDescription = "End")
+                    }
+                    Text("End", fontSize = 12.sp)
+                }
             }
 
-            // End call
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FilledIconButton(
-                    onClick = onEndCall,
+            // ─── Triplex support button (only when no session active) ───
+            if (showTriplexButton) {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        triplexSession = TriplexCallSession(
+                            phase = TriplexCallPhase.INTENT_COLLECT,
+                            counterpartyName = "Samsung Support",
+                        )
+                    },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
+                        containerColor = Color(0xFF2196F3),
                     ),
                 ) {
-                    Icon(Icons.Filled.CallEnd, contentDescription = "End")
+                    Icon(Icons.Filled.SmartToy, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Triplex Support Call")
                 }
-                Text("End", fontSize = 12.sp)
             }
+        }
+
+        // ─── Triplex call chat (bottom sheet overlay) ───
+        triplexSession?.let { session ->
+            TriplexCallChat(
+                session = session,
+                onEndCall = {
+                    triplexSession = null
+                    onEndCall()
+                },
+                onRetry = {
+                    triplexSession = triplexSession?.copy(phase = TriplexCallPhase.DIALING)
+                },
+                onYankResponse = { answer ->
+                    triplexSession = triplexSession?.copy(
+                        phase = TriplexCallPhase.SPEAKING,
+                        pendingYank = null,
+                    )
+                },
+                onYankCancel = {
+                    triplexSession = triplexSession?.copy(
+                        phase = TriplexCallPhase.SPEAKING,
+                        pendingYank = null,
+                    )
+                },
+                onStartCall = { updated ->
+                    triplexSession = updated.copy(phase = TriplexCallPhase.DIALING)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 500.dp),
+            )
         }
     }
 }
@@ -233,6 +301,7 @@ private fun formatDuration(seconds: Int): String {
     return "%02d:%02d".format(m, s)
 }
 
+@Composable
 private fun EchoCancellationState.statusText() = when (this) {
     EchoCancellationState.ACTIVE -> "Active"
     EchoCancellationState.CALIBRATING -> "Calibrating"
@@ -240,6 +309,7 @@ private fun EchoCancellationState.statusText() = when (this) {
     EchoCancellationState.ERROR -> "Error"
 }
 
+@Composable
 private fun EchoCancellationState.statusColor() = when (this) {
     EchoCancellationState.ACTIVE -> MaterialTheme.colorScheme.primary
     EchoCancellationState.CALIBRATING -> MaterialTheme.colorScheme.tertiary
@@ -247,6 +317,7 @@ private fun EchoCancellationState.statusColor() = when (this) {
     EchoCancellationState.ERROR -> MaterialTheme.colorScheme.error
 }
 
+@Composable
 private fun ChimeConnectionState.statusText() = when (this) {
     ChimeConnectionState.DISCONNECTED -> "Disconnected"
     ChimeConnectionState.CONNECTING -> "Connecting"
@@ -255,6 +326,7 @@ private fun ChimeConnectionState.statusText() = when (this) {
     ChimeConnectionState.ERROR -> "Error"
 }
 
+@Composable
 private fun ChimeConnectionState.statusColor() = when (this) {
     ChimeConnectionState.DISCONNECTED -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
     ChimeConnectionState.CONNECTING -> MaterialTheme.colorScheme.tertiary
@@ -263,6 +335,7 @@ private fun ChimeConnectionState.statusColor() = when (this) {
     ChimeConnectionState.ERROR -> MaterialTheme.colorScheme.error
 }
 
+@Composable
 private fun InterruptionState.statusText() = when (this) {
     InterruptionState.IDLE -> "Idle"
     InterruptionState.CALLER_SPEECH_DETECTED -> "Speech Detected"
@@ -271,6 +344,7 @@ private fun InterruptionState.statusText() = when (this) {
     InterruptionState.SUPPRESSED -> "Suppressed"
 }
 
+@Composable
 private fun InterruptionState.statusColor() = when (this) {
     InterruptionState.IDLE -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
     InterruptionState.CALLER_SPEECH_DETECTED -> MaterialTheme.colorScheme.tertiary

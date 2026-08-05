@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+import struct
+
 import torch
 
 
@@ -49,9 +51,7 @@ class VoiceActivityDetector:
 
     def _load_silero(self) -> None:
         """Load Silero VAD model."""
-        # Silero VAD is a pre-trained neural model
-        # Model is loaded from torch hub
-        self._model, self._utils = torch.hub.load(
+        self._model, _unused_utils = torch.hub.load(
             repo_or_dir="snakers4/silero-vad",
             model="silero_vad",
             force_reload=False,
@@ -106,8 +106,6 @@ class VoiceActivityDetector:
 
     def _pcm_bytes_to_tensor(self, pcm: bytes) -> torch.Tensor:
         """Convert raw PCM bytes to float tensor."""
-        import struct
-
         samples = struct.unpack(f"<{len(pcm) // 2}h", pcm)
         return torch.tensor(samples, dtype=torch.float32) / 32768.0
 

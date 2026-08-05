@@ -1,10 +1,13 @@
 package com.triplex.dialer.model
 
-import androidx.core.telecom.CallsManager
-
 /**
- * Mirrors AndroidX core-telecom CallState with Triplex-specific extensions.
- * Represents the lifecycle of a single call.
+ * Triplex call lifecycle states.
+ *
+ * Maps to Android telecom CallState integers for core-telecom integration:
+ * - NEW / RINGING → incoming call pending answer
+ * - ACTIVE → call connected with two-way audio
+ * - ON_HOLD / LOCAL_HOLD → hold states
+ * - DISCONNECTED / DISCONNECTING → call termination
  */
 enum class CallState {
     NEW,
@@ -15,27 +18,28 @@ enum class CallState {
     DISCONNECTED,
     DISCONNECTING;
 
-    /** Map to CallsManager telecom state for AndroidX core-telecom integration. */
-    fun toTelecomState(): Int = when (this) {
-        NEW -> CallsManager.CALL_STATE_NEW
-        RINGING -> CallsManager.CALL_STATE_RINGING
-        ACTIVE -> CallsManager.CALL_STATE_ACTIVE
-        ON_HOLD -> CallsManager.CALL_STATE_ON_HOLD
-        LOCAL_HOLD -> CallsManager.CALL_STATE_LOCAL_HOLD
-        DISCONNECTED -> CallsManager.CALL_STATE_DISCONNECTED
-        DISCONNECTING -> CallsManager.CALL_STATE_DISCONNECTING
-    }
-
     companion object {
+        /** Map from Android telecom state integers. */
         fun fromTelecomState(state: Int): CallState = when (state) {
-            CallsManager.CALL_STATE_NEW -> NEW
-            CallsManager.CALL_STATE_RINGING -> RINGING
-            CallsManager.CALL_STATE_ACTIVE -> ACTIVE
-            CallsManager.CALL_STATE_ON_HOLD -> ON_HOLD
-            CallsManager.CALL_STATE_LOCAL_HOLD -> LOCAL_HOLD
-            CallsManager.CALL_STATE_DISCONNECTED -> DISCONNECTED
-            CallsManager.CALL_STATE_DISCONNECTING -> DISCONNECTING
+            0 -> NEW       // CALL_STATE_NEW
+            1 -> RINGING   // CALL_STATE_RINGING
+            2 -> ACTIVE    // CALL_STATE_ACTIVE
+            3 -> ON_HOLD   // CALL_STATE_ON_HOLD
+            4 -> LOCAL_HOLD
+            5 -> DISCONNECTED
+            6 -> DISCONNECTING
             else -> DISCONNECTED
+        }
+
+        /** Map to Android telecom state integer. */
+        fun CallState.toTelecomState(): Int = when (this) {
+            NEW -> 0
+            RINGING -> 1
+            ACTIVE -> 2
+            ON_HOLD -> 3
+            LOCAL_HOLD -> 4
+            DISCONNECTED -> 5
+            DISCONNECTING -> 6
         }
     }
 }

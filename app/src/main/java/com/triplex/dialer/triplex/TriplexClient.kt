@@ -1,57 +1,75 @@
 package com.triplex.dialer.triplex
 
 import android.content.Context
-import com.triplex.dialer.model.*
-import kotlinx.coroutines.*
+import android.util.Log
+import com.triplex.dialer.model.CallData
+import com.triplex.dialer.model.CallDirection
+import com.triplex.dialer.model.ChimeConnectionState
+import com.triplex.dialer.model.EchoCancellationState
+import com.triplex.dialer.model.TriplexCallCapabilities
+import com.triplex.dialer.model.TriplexCallPhase
+import com.triplex.dialer.model.TriplexCallSession
+import com.triplex.dialer.model.VoiceCloneProfile
+import com.triplex.dialer.model.YankRequest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * High-level Triplex voice agent client for Android.
+ * Central orchestrator for Triplex voice-agent lifecycle on Android.
  *
- * Wires all four capabilities into a single lifecycle:
- * 1. Echo Cancellation — adaptive NLMS filter
- * 2. Chime/KVS Media — AWS Chime SDK meeting bridge
- * 3. Interruption Teardown — sub-50 ms barge-in
- * 4. Voice Synthesis — Kokoro or Qwen3-TTS clone
- *
- * Call lifecycle:
- *   incoming/outgoing → initialize → connect Chime → audio pipeline →
- *   VAD/ASR → LLM → TTS → playback → interruption → teardown → disconnect
+ * Owns Plivo bridge, audio pipeline, echo cancellation, interruption,
+ * voice synthesis, and call-session state.  Exposes a thin API consumed
+ * by TelecomVoipService, DialerViewModel, and the in-call UI.
  */
 class TriplexClient {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var currentCall: CallData? = null
 
-    /** Sub-engine references. */
-    lateinit var chimeBridge: ChimeSdkBridge
-        private set
-    lateinit var audioPipeline: AudioPipeline
-        private set
-    lateinit var echoCanceller: EchoCanceller
-        private set
-    lateinit var interruptionHandler: InterruptionHandler
-        private set
-    lateinit var voiceSynthesis: VoiceSynthesis
-        private set
-
-    /** Combined capabilities state for the in-call UX. */
     private val _capabilities = MutableStateFlow(TriplexCallCapabilities())
     val capabilities: StateFlow<TriplexCallCapabilities> = _capabilities
 
+    private val _sessionState = MutableStateFlow<TriplexCallSession?>(null)
+    val sessionState: StateFlow<TriplexCallSession?> = _sessionState
+
+    var currentCall: CallData? = null
+        private set
+
+    // Sub-engine instances created by initialize()
+    private var plivoBridge: PlivoWebSocketBridge? = null
+    private var audioPipeline: AudioPipeline? = null
+    private var echoCanceller: EchoCanceller? = null
+    private var interruptionHandler: InterruptionHandler? = null
+    private var voiceSynthesis: VoiceSynthesis? = null
+
     /** Initialize all Triplex sub-engines. */
     fun initialize(context: Context) {
-        chimeBridge = ChimeSdkBridge(scope)
-        audioPipeline = AudioPipeline(scope)
+        Log.d("TriplexClient", "initialize: creating sub-engines")
+        plivoBridge = PlivoWebSocketBridge(context, scope)
+        audioPipeline = AudioPipeline(context, scope)
+        echoCanceller = EchoCanceller()
+        interruptionHandler = InterruptionHandler(scope)
+        voiceSynthesis = VoiceSynthesis(scope)
+        Log.d("TriplexClient", "initialize: sub-engines created, launching capability collectors")
+
+        plivoBridge = PlivoWebSocketBridge(context, scope)
+        audioPipeline = AudioPipeline(context, scope)
         echoCanceller = EchoCanceller()
         interruptionHandler = InterruptionHandler(scope)
         voiceSynthesis = VoiceSynthesis(scope)
 
         // Wire capability state flows into combined capabilities
         scope.launch {
-            chimeBridge.connectionState.collect { chime ->
-                _capabilities.value = _capabilities.value.copy(chimeConnection = chime)
+            plivoBridge.connectionState.collect { plivo ->
+                _capabilities.value = _capabilities.value.copy(chimeConnection = when (plivo) {
+                    PlivoConnectionState.DISCONNECTED -> ChimeConnectionState.DISCONNECTED
+                    PlivoConnectionState.CONNECTING -> ChimeConnectionState.CONNECTING
+                    PlivoConnectionState.CONNECTED -> ChimeConnectionState.CONNECTED
+                    PlivoConnectionState.ERROR -> ChimeConnectionState.DISCONNECTED
+                })
             }
         }
         scope.launch {
@@ -66,18 +84,86 @@ class TriplexClient {
         }
     }
 
+    // ─── Yank lifecycle ───────────────────────────────────────────
+
+    /**
+     * AI hit a roadblock — needs user input.
+     * Sets pendingYank on the session, pauses AI speech, notifies UI.
+     */
+    fun requestUserInput(yankRequest: YankRequest) {
+        val session = _sessionState.value ?: return
+        _sessionState.value = session.copy(
+            phase = TriplexCallPhase.AWAITING_USER_INPUT,
+            pendingYank = yankRequest,
+        )
+        // Pause AI speech — stop TTS playback
+        voiceSynthesis.pause()
+    }
+
+    /**
+     * User provided the requested info — resume AI.
+     * The AI will speak the user's answer to the business/caller.
+     */
+    fun provideUserInput(answer: String) {
+        val session = _sessionState.value ?: return
+        // Clear the yank, resume AI speech
+        _sessionState.value = session.copy(
+            phase = TriplexCallPhase.SPEAKING,
+            pendingYank = null,
+        )
+        // Resume TTS with the answer
+        voiceSynthesis.resume(answer)
+    }
+
+    /** User dismissed the yank dialog — resume AI without providing info. */
+    fun cancelUserInput() {
+        val session = _sessionState.value ?: return
+        _sessionState.value = session.copy(
+            phase = TriplexCallPhase.SPEAKING,
+            pendingYank = null,
+        )
+        voiceSynthesis.resume(null)
+    }
+
+    // ─── DTMF lifecycle ──────────────────────────────────────────
+
+    /** Queue DTMF tones to send during the call. */
+    fun sendDTMF(digits: String, description: String = "") {
+        val session = _sessionState.value ?: return
+        val dtmf = DTMFSequence(digits = digits, description = description)
+        _sessionState.value = session.copy(pendingDTMF = dtmf)
+
+        // Generate and inject into audio pipeline
+        val tone = DTMFGenerator.generateSequence(digits)
+        audioPipeline.injectDTMF(tone)
+    }
+
+    /** Clear pending DTMF. */
+    fun clearDTMF() {
+        val session = _sessionState.value ?: return
+        _sessionState.value = session.copy(pendingDTMF = null)
+    }
+
+    // ─── Call lifecycle ──────────────────────────────────────────
+
     /** Handle an incoming call — bridge from TelecomVoipService. */
     fun handleIncomingCall(call: CallData) {
         currentCall = call
         scope.launch {
+            // Initialize session
+            _sessionState.value = TriplexCallSession(
+                direction = CallDirection.INCOMING,
+                phase = TriplexCallPhase.SCREENING,
+                counterpartyName = call.displayLabel(),
+            )
+
             // 1. Initialize audio pipeline
             audioPipeline.start()
 
-            // 2. Connect to Chime meeting
-            chimeBridge.connect("meeting-${call.id}", "agent-${call.id}")
+            // 2. Connect to Plivo bridge via call ID
+            plivoBridge.connect(call.id)
 
             // 3. Start echo cancellation
-            // (runs continuously in audio pipeline)
 
             // 4. Select voice synthesis engine
             voiceSynthesis.selectEngine(null) // default Kokoro
@@ -90,7 +176,7 @@ class TriplexClient {
         }
     }
 
-    /** Initiate an outgoing call via Chime SIP media app. */
+    /** Initiate an outgoing call via Plivo telephony. */
     fun placeCall(dialedNumber: String, cloneProfile: VoiceCloneProfile? = null) {
         scope.launch {
             val call = CallData(
@@ -99,18 +185,22 @@ class TriplexClient {
                 isTriplexAgent = cloneProfile != null,
             )
 
-            // 1. Create Chime meeting via SIP media app
-            val meeting = ChimeSdkBridge.createMeetingViaSipMediaApp(
-                callerNumber = dialedNumber,
-                meetingId = "call-${call.id}",
+            // Initialize session
+            _sessionState.value = TriplexCallSession(
+                direction = CallDirection.OUTGOING,
+                phase = TriplexCallPhase.DIALING,
+                counterpartyName = dialedNumber,
             )
 
-            // 2. Connect audio pipeline
+            // 1. Connect audio pipeline
             audioPipeline.start()
-            chimeBridge.connect(meeting.getOrThrow()["meetingId"] ?: call.id, "agent-${call.id}")
+            plivoBridge.connect(call.id)
 
             // 3. Select voice
             voiceSynthesis.selectEngine(cloneProfile)
+
+            // 4. Session transitions to SPEAKING
+            _sessionState.value = _sessionState.value?.copy(phase = TriplexCallPhase.SPEAKING)
 
             currentCall = call
         }
@@ -119,10 +209,11 @@ class TriplexClient {
     /** End the current call — teardown all engines. */
     fun endCall(call: CallData) {
         scope.launch {
-            chimeBridge.disconnect()
+            plivoBridge.disconnect()
             audioPipeline.stop()
             echoCanceller.reset()
             voiceSynthesis.reset()
+            _sessionState.value = null
             currentCall = null
         }
     }
@@ -135,5 +226,14 @@ class TriplexClient {
     /** Put a call on local hold. */
     fun setHeld(call: CallData, isLocalHold: Boolean) {
         // Forward to Chime SDK — mute egress, keep ingress
+    }
+
+    /** Transfer an incoming call to the user. */
+    fun transferToUser(call: CallData) {
+        // 1. Stop AI speech
+        voiceSynthesis.reset()
+        // 2. Bridge audio to user's earpiece
+        // 3. End session tracking
+        _sessionState.value = null
     }
 }

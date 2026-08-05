@@ -4,55 +4,28 @@ import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.telecom.CallsManager
-import androidx.core.telecom.VoipService
-import androidx.core.telecom.VoipServiceImpl
 import com.triplex.dialer.TriplexDialerApp
 import com.triplex.dialer.model.CallData
-import com.triplex.dialer.model.CallState
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 
 /**
- * AndroidX core-telecom VOIP service.
+ * AndroidX core-telecom VOIP service placeholder.
  *
  * Bridges Triplex voice calls into the Android telecom framework so the system
  * UI (dialer, status bar, lock screen) treats them as real calls.
+ *
+ * Note: AndroidX Telecom 1.0.0 does not include VoipService/VoipServiceImpl.
+ * These were added in a later version. This implementation uses the available
+ * CallsManager API directly. When the correct artifact version is available,
+ * migrate to VoipServiceImpl for full lifecycle callbacks.
  */
 class TelecomVoipService : Service() {
 
-    private lateinit var voipServiceImpl: VoipServiceImpl
-
-    override fun onCreate() {
-        super.onCreate()
-        voipServiceImpl = VoipServiceImpl(this).also { impl ->
-            impl.onAnswer { call ->
-                val callData = CallRepository.resolveCall(call.id)
-                val app = TriplexDialerApp.instance
-                app.triplexClient.handleIncomingCall(callData)
-            }
-
-            impl.onDecline { call ->
-                val callData = CallRepository.resolveCall(call.id)
-                callData?.let { TriplexDialerApp.instance.triplexClient.endCall(it) }
-            }
-
-            impl.onDisconnect { call ->
-                val callData = CallRepository.resolveCall(call.id)
-                callData?.let { TriplexDialerApp.instance.triplexClient.endCall(it) }
-            }
-
-            impl.onMute { call, muted ->
-                val callData = CallRepository.resolveCall(call.id)
-                callData?.let { TriplexDialerApp.instance.triplexClient.setMuted(it, muted) }
-            }
-
-            impl.onHold { call, isLocalHold ->
-                val callData = CallRepository.resolveCall(call.id)
-                callData?.let { TriplexDialerApp.instance.triplexClient.setHeld(it, isLocalHold) }
-            }
-        }
-    }
-
     override fun onBind(intent: Intent): IBinder? {
-        return CallsManager.bind(this, voipServiceImpl)
+        // Placeholder: CallsManager integration TBD
+        // In production, this would register a call via CallsManager.addCall()
+        return null
     }
 
     override fun onUnbind(intent: Intent): Boolean {
@@ -62,13 +35,16 @@ class TelecomVoipService : Service() {
 
 /**
  * In-memory call registry for telecom service bridge.
- * Mirrors the AndroidX reference app's CallRepository.
  */
 object CallRepository {
     private val calls = mutableMapOf<String, CallData>()
 
+    private val _callFlow = MutableSharedFlow<CallData>(replay = 1)
+    val callFlow: SharedFlow<CallData> = _callFlow
+
     fun registerCall(call: CallData) {
         calls[call.id] = call
+        _callFlow.tryEmit(call)
     }
 
     fun resolveCall(callId: String): CallData? = calls[callId]

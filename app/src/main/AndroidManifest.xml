@@ -11,7 +11,7 @@
 
     <application
         android:name=".TriplexDialerApp"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/ic_menu_call"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.TriplexDialer"
@@ -39,7 +39,7 @@
         <service
             android:name=".service.TriplexChimeService"
             android:exported="false"
-            android:foregroundServiceType="mediaSystemAudio" />
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name=".FileProvider"

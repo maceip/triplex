@@ -1,6 +1,7 @@
 package com.triplex.dialer.triplex
 
 import com.triplex.dialer.Constants
+import kotlin.math.pow
 import com.triplex.dialer.model.InterruptionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,12 +90,7 @@ class InterruptionHandler(private val scope: CoroutineScope = CoroutineScope(Dis
         /** Simple VAD decision — true if audio level exceeds threshold. */
         fun isCallerSpeech(pcmFrame: ShortArray, thresholdDb: Float = Constants.VAD_THRESHOLD_DB): Boolean {
             val threshold = (32768f * 10f.pow(thresholdDb / 20f)).toInt()
-            var maxAmplitude = 0
-            for (s in pcmFrame) {
-                val absVal = kotlin.math.abs(s.toInt())
-                if (absVal > maxAmplitude) maxAmplitude = absVal
-            }
-            return maxAmplitude > threshold
+            return peakAmplitude(pcmFrame) > threshold
         }
     }
 }

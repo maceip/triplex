@@ -24,6 +24,9 @@ class EchoCanceller {
     private var farEndBuffer: ShortArray = ShortArray(0)
     private var erle: Float = 0f
 
+    /** Per-stage profiler (shared with AudioPipeline or standalone). */
+    val profiler = AudioProfiler()
+
     /** Process a 20 ms PCM frame through the echo canceller. */
     fun processFrame(
         nearEnd: ShortArray,    // Mic capture (caller audio + echo)
@@ -31,26 +34,27 @@ class EchoCanceller {
         frameSize: Int = AudioPipeline.FRAME_SIZE_BYTES / 2, // 320 samples
     ): ShortArray {
         // 1. Push far-end reference into FIFO
-        enqueueFarEnd(farEnd)
+        profiler.measure("echo_enqueue") { enqueueFarEnd(farEnd) }
 
         // 2. Run adaptive filter to estimate echo
-        val echoEstimate = computeEchoEstimate()
+        val echoEstimate = profiler.measure("echo_filter") { computeEchoEstimate() }
 
         // 3. Subtract from near-end → residual
-        val residual = subtractEcho(nearEnd, echoEstimate)
+        val residual = profiler.measure("echo_subtract") { subtractEcho(nearEnd, echoEstimate) }
 
         // 4. Double-talk detection
-        if (isDoubleTalk(nearEnd, farEnd)) {
+        val isDt = profiler.measure("echo_doubletalk") { isDoubleTalk(nearEnd, farEnd) }
+        if (isDt) {
             // Freeze adaptation — don't update coefficients
             _state.value = EchoCancellationState.ACTIVE
             return residual
         }
 
         // 5. Update filter coefficients (NLMS)
-        updateCoefficients(nearEnd, residual)
+        profiler.measure("echo_update") { updateCoefficients(nearEnd, residual) }
 
         // 6. Compute ERLE for diagnostics
-        erle = computeErle(nearEnd, residual)
+        erle = profiler.measure("echo_erle") { computeErle(nearEnd, residual) }
         _state.value = if (erle > 20f) EchoCancellationState.ACTIVE
         else EchoCancellationState.CALIBRATING
 
@@ -92,7 +96,7 @@ class EchoCanceller {
         val minLen = minOf(nearEnd.size, estimate.size)
         val residual = ShortArray(minLen)
         for (i in 0 until minLen) {
-            residual[i] = (nearEnd[i] - estimate[i]).toInt().toShort()
+            residual[i] = (nearEnd[i] - estimate[i]).toShort()
         }
         return residual
     }
