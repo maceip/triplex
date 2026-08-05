@@ -32,5 +32,3 @@ apps/android/.cxx/
 apps/android/**/.cxx/
 apps/android/local.properties
 apps/android/.kotlin/
-mobile/
-# ^ separate git repo with its own history (8 commits, preserved in place)
