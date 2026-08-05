@@ -7,6 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,8 +58,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import dev.triplex.ui.components.OutlinedTextInput
@@ -71,6 +80,7 @@ import dev.triplex.ui.components.VoiceSpherePhase
 import dev.triplex.ui.theme.TriplexDesign
 import dev.triplex.ui.theme.TriplexIcons
 import java.util.Locale
+import kotlin.math.abs
 
 /** Consent-first voice enrollment, preparation, preview, and revocation. */
 @Composable
@@ -210,6 +220,68 @@ private data class EnrollmentCopy(
     val status: String
 )
 
+private const val CONSENT_GUIDE_DURATION_MILLIS = 13_600L
+private val consentPromptWords = CONSENT_STATEMENT.split(' ')
+private val consentPromptWeights = consentPromptWords.map { word ->
+    1f + word.length.coerceAtMost(12) * 0.018f + when {
+        word.endsWith('.') -> 0.42f
+        word.endsWith(',') -> 0.24f
+        else -> 0f
+    }
+}
+private val consentPromptTotalWeight = consentPromptWeights.sum()
+
+/** Time-based reading guide. It deliberately does not claim ASR alignment. */
+internal data class VoicePromptProgress(
+    val activeWordIndex: Int,
+    val activeWordFraction: Float,
+    val completedWordCount: Int,
+    val overallProgress: Float,
+    val wordCount: Int
+)
+
+internal fun voicePromptProgress(elapsedMillis: Long): VoicePromptProgress {
+    val overall = (elapsedMillis.coerceAtLeast(0L).toFloat() / CONSENT_GUIDE_DURATION_MILLIS)
+        .coerceIn(0f, 1f)
+    val lastIndex = consentPromptWords.lastIndex
+    if (overall >= 1f) {
+        return VoicePromptProgress(
+            activeWordIndex = lastIndex,
+            activeWordFraction = 1f,
+            completedWordCount = consentPromptWords.size,
+            overallProgress = 1f,
+            wordCount = consentPromptWords.size
+        )
+    }
+
+    val targetWeight = overall * consentPromptTotalWeight
+    var consumedWeight = 0f
+    consentPromptWeights.forEachIndexed { index, wordWeight ->
+        if (targetWeight <= consumedWeight + wordWeight) {
+            return VoicePromptProgress(
+                activeWordIndex = index,
+                activeWordFraction = ((targetWeight - consumedWeight) / wordWeight)
+                    .coerceIn(0f, 1f),
+                completedWordCount = index,
+                overallProgress = overall,
+                wordCount = consentPromptWords.size
+            )
+        }
+        consumedWeight += wordWeight
+    }
+
+    return VoicePromptProgress(lastIndex, 1f, consentPromptWords.size, 1f, consentPromptWords.size)
+}
+
+internal fun voicePromptAlignment(
+    progress: VoicePromptProgress,
+    amplitude: Float
+): Float {
+    val wordCenter = 1f - abs(progress.activeWordFraction * 2f - 1f)
+    return (0.34f + wordCenter * 0.26f + amplitude.coerceIn(0f, 1f) * 0.48f)
+        .coerceIn(0f, 1f)
+}
+
 @Composable
 private fun VoiceEnrollmentExperience(
     state: VoiceCloneState,
@@ -238,6 +310,7 @@ private fun VoiceEnrollmentExperience(
         EnrollmentUiStage.PREPARING -> 2
         EnrollmentUiStage.RETRY -> if (state.lastCaptureSeconds == null) 0 else 1
     }
+    val promptProgress = voicePromptProgress(meter.elapsedMillis)
     val scrollState = rememberScrollState()
 
     LaunchedEffect(stage) {
@@ -268,6 +341,11 @@ private fun VoiceEnrollmentExperience(
                 TriplexVoiceSphere(
                     phase = spherePhase,
                     amplitude = if (stage == EnrollmentUiStage.RECORDING) meter.amplitude else 0f,
+                    alignment = if (stage == EnrollmentUiStage.RECORDING) {
+                        voicePromptAlignment(promptProgress, meter.amplitude)
+                    } else {
+                        1f
+                    },
                     modifier = Modifier.size(sphereSize),
                     contentDescription = when (stage) {
                         EnrollmentUiStage.RECORDING -> "Voice sphere reacting to microphone level"
@@ -348,7 +426,8 @@ private fun VoiceEnrollmentExperience(
                     } else {
                         VoiceReadingCard(
                             recording = stage == EnrollmentUiStage.RECORDING,
-                            meter = meter
+                            meter = meter,
+                            promptProgress = promptProgress
                         )
                     }
                 }
@@ -566,7 +645,8 @@ private fun VoiceProgressSegment(
 @Composable
 private fun VoiceReadingCard(
     recording: Boolean,
-    meter: VoiceCaptureMeter
+    meter: VoiceCaptureMeter,
+    promptProgress: VoicePromptProgress
 ) {
     val spacing = TriplexDesign.spacing
     TriplexCard(
@@ -599,20 +679,15 @@ private fun VoiceReadingCard(
                     )
                 }
             }
-            Text(
-                text = CONSENT_STATEMENT,
-                style = MaterialTheme.typography.bodyLarge,
-                fontStyle = FontStyle.Italic,
-                color = if (recording) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                }
+            VoicePromptStatement(
+                recording = recording,
+                promptProgress = promptProgress,
+                amplitude = meter.amplitude
             )
             AnimatedVisibility(visible = recording) {
                 Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
                     LinearProgressIndicator(
-                        progress = { meter.durationProgress },
+                        progress = { promptProgress.overallProgress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(5.dp),
@@ -624,12 +699,12 @@ private fun VoiceReadingCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "PACING GUIDE",
+                            "FOLLOW THE HIGHLIGHT",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
                         )
                         Text(
-                            "SPEAK NATURALLY",
+                            "WORD ${promptProgress.activeWordIndex + 1} OF ${promptProgress.wordCount}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
                         )
@@ -638,6 +713,58 @@ private fun VoiceReadingCard(
             }
         }
     }
+}
+
+@Composable
+private fun VoicePromptStatement(
+    recording: Boolean,
+    promptProgress: VoicePromptProgress,
+    amplitude: Float
+) {
+    val activePulse by rememberInfiniteTransition(label = "Active voice word pulse").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(520, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Active voice word glow"
+    )
+    val colors = MaterialTheme.colorScheme
+    val prompt = if (recording) {
+        buildAnnotatedString {
+            consentPromptWords.forEachIndexed { index, word ->
+                val style = when {
+                    index < promptProgress.completedWordCount -> SpanStyle(
+                        color = colors.secondary.copy(alpha = 0.80f),
+                        fontWeight = FontWeight.Medium
+                    )
+                    index == promptProgress.activeWordIndex -> SpanStyle(
+                        color = colors.onPrimaryContainer,
+                        background = colors.secondary.copy(
+                            alpha = 0.16f + activePulse * 0.12f +
+                                amplitude.coerceIn(0f, 1f) * 0.10f
+                        ),
+                        fontWeight = FontWeight.Bold
+                    )
+                    else -> SpanStyle(
+                        color = colors.onPrimaryContainer.copy(alpha = 0.43f)
+                    )
+                }
+                withStyle(style) { append(word) }
+                if (index != consentPromptWords.lastIndex) append(' ')
+            }
+        }
+    } else {
+        buildAnnotatedString { append(CONSENT_STATEMENT) }
+    }
+
+    Text(
+        text = prompt,
+        style = MaterialTheme.typography.bodyLarge,
+        fontStyle = if (recording) FontStyle.Normal else FontStyle.Italic,
+        color = if (recording) colors.onPrimaryContainer else colors.onSurface
+    )
 }
 
 @Composable
@@ -727,6 +854,7 @@ private fun VoiceReadyExperience(
             TriplexVoiceSphere(
                 phase = spherePhase,
                 amplitude = 0f,
+                alignment = if (state.stage == VoiceCloneStage.PLAYING) 0.68f else 1f,
                 modifier = Modifier.size(if (compact) 172.dp else 208.dp),
                 contentDescription = when (state.stage) {
                     VoiceCloneStage.SYNTHESIZING -> "Creating a cloned voice preview"

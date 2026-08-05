@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import dev.triplex.ui.theme.TriplexDesign
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
 
@@ -54,6 +55,7 @@ fun TriplexVoiceSphere(
     phase: VoiceSpherePhase,
     amplitude: Float,
     modifier: Modifier = Modifier,
+    alignment: Float = 1f,
     contentDescription: String = "Voice capture visualization"
 ) {
     val palette = TriplexDesign.colors
@@ -95,15 +97,40 @@ fun TriplexVoiceSphere(
         ),
         label = "Voice sphere breath"
     )
+    val kineticDegrees by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1_320, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "Voice sphere kinetic cycle"
+    )
+    val voiceBeat by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(520, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Voice sphere voice beat"
+    )
 
     val effectiveEnergy = when (phase) {
-        VoiceSpherePhase.LISTENING -> inputEnergy
-        VoiceSpherePhase.PLAYING -> max(inputEnergy, 0.38f + breathing * 0.25f)
+        VoiceSpherePhase.LISTENING -> max(inputEnergy, 0.14f + voiceBeat * 0.10f)
+        VoiceSpherePhase.PLAYING -> max(inputEnergy, 0.42f + voiceBeat * 0.34f)
         VoiceSpherePhase.PROCESSING -> 0.18f + breathing * 0.18f
-        VoiceSpherePhase.READY -> 0.10f + breathing * 0.08f
+        VoiceSpherePhase.READY -> 0.10f + breathing * 0.10f
         VoiceSpherePhase.ERROR -> 0.08f
         VoiceSpherePhase.RESTING -> 0.05f + breathing * 0.04f
     }.coerceIn(0f, 1f)
+    val activeMotion = when (phase) {
+        VoiceSpherePhase.LISTENING,
+        VoiceSpherePhase.PLAYING -> 1f
+        VoiceSpherePhase.PROCESSING -> 0.56f
+        VoiceSpherePhase.READY -> 0.12f
+        else -> 0f
+    }
 
     val highlightColor = lerp(
         sphereColor,
@@ -113,6 +140,8 @@ fun TriplexVoiceSphere(
     val deepColor = lerp(palette.surfaceSunken, sphereColor, 0.58f)
     val ribbonColor = MaterialTheme.colorScheme.onBackground
     val secondaryRibbon = MaterialTheme.colorScheme.secondary
+    val guideLobeColor = MaterialTheme.colorScheme.primary
+    val liveLobeColor = MaterialTheme.colorScheme.secondary
     val scrim = MaterialTheme.colorScheme.scrim
 
     Canvas(
@@ -125,6 +154,18 @@ fun TriplexVoiceSphere(
         val coreRadius = diameter * (0.335f + effectiveEnergy * 0.012f)
         val haloRadius = coreRadius * (1.34f + effectiveEnergy * 0.13f)
         val phaseRadians = orbitDegrees / 180f * PI.toFloat()
+        val kineticRadians = kineticDegrees / 180f * PI.toFloat()
+        val alignmentAmount = alignment.coerceIn(0f, 1f)
+        val separation = coreRadius * activeMotion * (0.24f - alignmentAmount * 0.13f)
+        val travel = coreRadius * activeMotion * (0.07f + effectiveEnergy * 0.12f)
+        val guideCenter = Offset(
+            x = center.x - separation + cos(kineticRadians) * travel,
+            y = center.y + sin(kineticRadians * 1.18f) * travel * 0.58f
+        )
+        val voiceCenter = Offset(
+            x = center.x + separation - cos(kineticRadians * 1.12f + 0.72f) * travel,
+            y = center.y - sin(kineticRadians * 1.34f + 0.46f) * travel * 0.68f
+        )
 
         drawOval(
             color = scrim.copy(alpha = 0.18f),
@@ -180,6 +221,50 @@ fun TriplexVoiceSphere(
                 radius = coreRadius,
                 center = center
             )
+
+            // Two translucent bodies make the enrollment relationship legible:
+            // violet is the pacing guide and cyan/green is the live voice. They
+            // converge as the time-based guide and microphone energy align.
+            if (activeMotion > 0f) {
+                val lobeRadius = coreRadius * (0.72f + effectiveEnergy * 0.09f)
+                val guideColor = guideLobeColor
+                val voiceColor = when (phase) {
+                    VoiceSpherePhase.PLAYING -> palette.success
+                    else -> liveLobeColor
+                }
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            highlightColor.copy(alpha = 0.32f * activeMotion),
+                            guideColor.copy(alpha = 0.62f * activeMotion),
+                            Color.Transparent
+                        ),
+                        center = Offset(
+                            guideCenter.x - lobeRadius * 0.22f,
+                            guideCenter.y - lobeRadius * 0.24f
+                        ),
+                        radius = lobeRadius
+                    ),
+                    radius = lobeRadius,
+                    center = guideCenter
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            ribbonColor.copy(alpha = 0.28f * activeMotion),
+                            voiceColor.copy(alpha = (0.54f + effectiveEnergy * 0.22f) * activeMotion),
+                            Color.Transparent
+                        ),
+                        center = Offset(
+                            voiceCenter.x - lobeRadius * 0.18f,
+                            voiceCenter.y - lobeRadius * 0.20f
+                        ),
+                        radius = lobeRadius
+                    ),
+                    radius = lobeRadius,
+                    center = voiceCenter
+                )
+            }
 
             rotate(degrees = -13f + orbitDegrees * 0.055f, pivot = center) {
                 repeat(3) { index ->
@@ -257,6 +342,37 @@ fun TriplexVoiceSphere(
                 center = Offset(
                     center.x - coreRadius * 0.38f,
                     center.y - coreRadius * 0.42f
+                )
+            )
+        }
+
+        if (activeMotion > 0.2f) {
+            val guideOutline = guideLobeColor
+            val voiceOutline = when (phase) {
+                VoiceSpherePhase.PLAYING -> palette.success
+                else -> liveLobeColor
+            }
+            val lobeRadius = coreRadius * (0.72f + effectiveEnergy * 0.09f)
+            drawCircle(
+                color = guideOutline.copy(alpha = 0.22f * activeMotion),
+                radius = lobeRadius,
+                center = guideCenter,
+                style = Stroke(width = diameter * 0.006f)
+            )
+            drawCircle(
+                color = voiceOutline.copy(alpha = (0.25f + effectiveEnergy * 0.18f) * activeMotion),
+                radius = lobeRadius,
+                center = voiceCenter,
+                style = Stroke(width = diameter * 0.007f)
+            )
+            drawCircle(
+                color = ribbonColor.copy(
+                    alpha = alignmentAmount * activeMotion * (0.16f + voiceBeat * 0.18f)
+                ),
+                radius = coreRadius * (0.055f + voiceBeat * 0.035f),
+                center = Offset(
+                    x = (guideCenter.x + voiceCenter.x) / 2f,
+                    y = (guideCenter.y + voiceCenter.y) / 2f
                 )
             )
         }
