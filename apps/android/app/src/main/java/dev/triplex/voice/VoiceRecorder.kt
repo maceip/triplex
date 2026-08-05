@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
-import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -49,6 +48,7 @@ class VoiceRecorder @Inject constructor() {
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     suspend fun record(target: File): ReferenceAudio.Result = withContext(Dispatchers.IO) {
         check(recording.compareAndSet(false, true)) { "Already recording" }
+        liveRms = 0.0
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -56,6 +56,7 @@ class VoiceRecorder @Inject constructor() {
         )
         check(minBuffer > 0) { "AudioRecord unavailable (min buffer $minBuffer)" }
         val bufferBytes = maxOf(minBuffer, SAMPLE_RATE) // >= ~0.5 s of headroom
+        val readChunkSamples = SAMPLE_RATE * METER_FRAME_MILLIS / 1_000
 
         // VOICE_RECOGNITION applies the platform's speech-tuned capture path
         // (noise suppression without the aggressive dynamics of VOICE_COMMUNICATION,
@@ -77,13 +78,22 @@ class VoiceRecorder @Inject constructor() {
                 "AudioRecord failed to initialize"
             }
             audioRecord.startRecording()
-            val chunk = ShortArray(bufferBytes / BYTES_PER_SAMPLE)
+            // Keep generous AudioRecord headroom while reading bounded 20 ms
+            // frames. The UI meter stays responsive, while the final sample
+            // still passes through the whole-utterance conditioning pipeline.
+            val chunk = ShortArray(readChunkSamples)
             while (recording.get() && sampleCount < capSamples) {
                 val room = minOf(chunk.size, capSamples - sampleCount)
                 val read = audioRecord.read(chunk, 0, room)
                 if (read > 0) {
                     chunk.copyInto(captured, sampleCount, 0, read)
                     sampleCount += read
+                    var energy = 0.0
+                    for (index in 0 until read) {
+                        val sample = chunk[index].toDouble()
+                        energy += sample * sample
+                    }
+                    liveRms = kotlin.math.sqrt(energy / read)
                     if (sampleCount >= capSamples) {
                         Timber.i("Reference duration cap reached (%.0fs)", MAX_SECONDS)
                         recording.set(false)
@@ -99,6 +109,7 @@ class VoiceRecorder @Inject constructor() {
             effects.forEach { effect -> runCatching { effect.release() } }
             recorder = null
             recording.set(false)
+            liveRms = 0.0
         }
 
         val raw = captured.copyOf(sampleCount)
@@ -129,6 +140,11 @@ class VoiceRecorder @Inject constructor() {
     fun stop() {
         recording.set(false)
     }
+
+    /** Current raw capture energy for UI metering; never alters prepared PCM. */
+    @Volatile
+    var liveRms: Double = 0.0
+        private set
 
     /**
      * Enables the device's own noise suppressor and gain control when it has
@@ -200,6 +216,7 @@ class VoiceRecorder @Inject constructor() {
         const val SAMPLE_RATE = 24_000
         private const val BYTES_PER_SAMPLE = 2
         private const val WAV_HEADER_BYTES = 44
+        private const val METER_FRAME_MILLIS = 20
         const val MIN_SECONDS = 3f
         // Below the model's 30 s ceiling: long references cost far more to
         // prepare without improving the clone.

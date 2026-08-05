@@ -84,6 +84,8 @@ using, and why. Then:
 - `docs/DISPOSITION_LEDGER.md` — every part of the code and whether we keep
   it, change it, or have retired it. **Read this before writing new code**, so
   you do not rebuild something that already exists.
+- `docs/MODEL_REVIEW_TTS.md` — every speech model we looked at, including the
+  ones we turned down and why.
 - `docs/DECISION_TTS_PLACEMENT.md` — the speech measurements and what we chose.
 
 ## A rule worth knowing
