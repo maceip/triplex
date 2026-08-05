@@ -37,5 +37,10 @@ class VoiceCaptureMeterTest {
             VoiceCaptureMeter(elapsedMillis = 30_000, maximumSeconds = 15).durationProgress,
             0f
         )
+        assertEquals(
+            0f,
+            VoiceCaptureMeter(elapsedMillis = 1_000, maximumSeconds = 0).durationProgress,
+            0f
+        )
     }
 }

@@ -287,7 +287,10 @@ private fun VoiceEnrollmentExperience(
                     },
                     label = "Voice enrollment instruction"
                 ) { animatedStage ->
-                    val animatedCopy = enrollmentCopy(animatedStage)
+                    val animatedCopy = enrollmentCopy(
+                        stage = animatedStage,
+                        retryReason = state.error
+                    )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(spacing.small)
@@ -350,7 +353,7 @@ private fun VoiceEnrollmentExperience(
                     }
                 }
 
-                state.error?.let { error ->
+                state.error?.takeIf { stage != EnrollmentUiStage.RETRY }?.let { error ->
                     TriplexCard(
                         modifier = Modifier.fillMaxWidth(),
                         tone = TriplexCardTone.DANGER
@@ -881,7 +884,7 @@ private fun VoiceProfileDetails(state: VoiceCloneState) {
             }
             if (state.placementReason.isNotBlank()) {
                 Text(
-                    text = state.placementReason,
+                    text = formatPlacementReason(state.placementReason),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
                 )
@@ -908,7 +911,19 @@ private fun VoiceProfileDetails(state: VoiceCloneState) {
     }
 }
 
-private fun enrollmentCopy(stage: EnrollmentUiStage): EnrollmentCopy = when (stage) {
+private fun formatPlacementReason(reason: String): String {
+    val trimmed = reason.trim()
+    if (trimmed.isEmpty()) return trimmed
+    val sentence = trimmed.replaceFirstChar { first ->
+        if (first.isLowerCase()) first.titlecase() else first.toString()
+    }
+    return if (sentence.last() in ".!?") sentence else "$sentence."
+}
+
+private fun enrollmentCopy(
+    stage: EnrollmentUiStage,
+    retryReason: String? = null
+): EnrollmentCopy = when (stage) {
     EnrollmentUiStage.CONSENT -> EnrollmentCopy(
         eyebrow = "ONE-TIME VOICE ENROLLMENT",
         title = "Create a voice that sounds like you.",
@@ -930,7 +945,8 @@ private fun enrollmentCopy(stage: EnrollmentUiStage): EnrollmentCopy = when (sta
     EnrollmentUiStage.RETRY -> EnrollmentCopy(
         eyebrow = "QUICK RETRY",
         title = "Let’s capture that once more.",
-        description = "A clear, complete reading gives the voice profile enough detail to sound like you.",
+        description = retryReason
+            ?: "A clear, complete reading gives the voice profile enough detail to sound like you.",
         status = "NEEDS ANOTHER PASS"
     )
 }
