@@ -1,0 +1,12 @@
+{
+  "label": "Android end-to-end voice-clone loop",
+  "proven": "Phone UI -> gateway -> voice service -> Qwen3-TTS -> WAV -> phone cache -> device speaker",
+  "reference_speaker": "synthetic Kokoro af_heart (documented; not a human voice)",
+  "note": "Android AudioRecord capture+upload was separately proven with a live 29s device recording that produced a prepared profile.",
+  "file": "android_e2e_preview.wav",
+  "sha256": "a9ba27208137de544991688e30126fab00495d97330820bc438f5b4a6fe1cbeb",
+  "duration_seconds": 9.44,
+  "sample_rate_hz": 24000,
+  "placement": "REMOTE_TTS",
+  "date": "2026-08-04"
+}

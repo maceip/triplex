@@ -1,0 +1,6 @@
+external native build {
+    cmake {
+        path file("../../../native-media/CMakeLists.txt")
+        version "3.22.1"
+    }
+}

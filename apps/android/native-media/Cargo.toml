@@ -1,0 +1,28 @@
+[package]
+name = "triplex-native-media"
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[features]
+default = []
+rt-alloc-counting = ["dep:alloc_counter"]
+
+[dependencies]
+alloc_counter = { version = "0.0.4", optional = true }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "deny"
+pedantic = "allow"

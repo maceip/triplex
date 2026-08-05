@@ -1,0 +1,20 @@
+[project]
+name = "triplex-testlab"
+version = "0.1.0"
+description = "Triplex PSTN verification and telephony testing"
+requires-python = ">=3.11"
+
+dependencies = [
+    "plivo>=1.24.0",
+    "aiohttp>=3.9.0",
+    "pyyaml>=6.0.1",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.scripts]
+live-pstn-test = "live_pstn_test:main"
+generate-test-audio = "generate_test_audio:main"
+document-evidence = "document_evidence:main"

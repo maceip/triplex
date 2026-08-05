@@ -10,3 +10,27 @@ build/
 node_modules/
 *.js.map
 .cache/
+
+# Secrets — Plivo API credentials, gateway production env
+.env
+.env.*
+!.env.example
+gateway/.env
+
+# Consented voice references and their metadata are personal data; they live
+# on the device and the voice service, never in version control.
+services/voice-clone/profiles/
+testlab/voice-clone-demo/artifacts/consented/
+
+# Build outputs and prepared native dependencies (rebuilt by
+# apps/android/scripts/prepare-native.sh)
+target/
+apps/android/.native-deps/
+apps/android/**/build/
+apps/android/.gradle/
+apps/android/.cxx/
+apps/android/**/.cxx/
+apps/android/local.properties
+apps/android/.kotlin/
+mobile/
+# ^ separate git repo with its own history (8 commits, preserved in place)

@@ -1,0 +1,29 @@
+{
+  "label": "synthetic-reference clone smoke run",
+  "claim": "Real Qwen3-TTS zero-shot inference executed locally; the cloned speaker is a synthetic Kokoro voice, not a human.",
+  "created_utc": "2026-08-04T03:26:08.982389+00:00",
+  "model": {
+    "name": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "revision": "5d83992436eae1d760afd27aff78a71d676296fc"
+  },
+  "reference": {
+    "file": "reference_kokoro_af_heart.wav",
+    "sha256": "462d43241d987f58faa50732101033bb422ea1f45ef99741dbce6e44ed08146a",
+    "duration_seconds": 10.325,
+    "text": "Triplex is a phone first voice agent. This recording is a synthetic reference sample generated for engineering validation of the voice cloning pipeline.",
+    "speaker": "kokoro af_heart (synthetic)"
+  },
+  "output": {
+    "file": "cloned_output.wav",
+    "sha256": "9f6ec6ae6696efc4ef80941c2e45916e62cd6b2ce23f63e0d6d4eb718d8abd9a",
+    "duration_seconds": 6.56,
+    "sample_rate_hz": 24000,
+    "text": "The quarterly gate review moved to Thursday at four thirty. Bring the latency evidence and the signed artifact checklist."
+  },
+  "timings_seconds": {
+    "model_load": 4.15,
+    "prompt_build": 3.39,
+    "synthesis": 6.18,
+    "total": 16.92
+  }
+}

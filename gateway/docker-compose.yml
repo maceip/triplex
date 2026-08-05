@@ -1,0 +1,38 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://triplex:triplex@db:5432/triplex
+      - ADMIN_API_KEY=${TRIPLEX_ADMIN_API_KEY:-dev-admin-key}
+      # Voice-clone backend runs on the host (needs MPS/torch).
+      - VOICE_SERVICE_URL=${TRIPLEX_VOICE_SERVICE_URL:-http://host.docker.internal:8801}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=triplex
+      - POSTGRES_PASSWORD=triplex
+      - POSTGRES_DB=triplex
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triplex"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

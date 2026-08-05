@@ -1,0 +1,22 @@
+{
+  "created_utc": "2026-08-05T00:25:47.028026+00:00",
+  "results": [
+    {
+      "trial": "H clean + REVERB",
+      "outcome": "ok",
+      "synthesis_seconds": 2.6,
+      "output_seconds": 2.8
+    },
+    {
+      "trial": "I clean + BANDLIMITED",
+      "outcome": "ok",
+      "synthesis_seconds": 3.1,
+      "output_seconds": 2.96
+    },
+    {
+      "trial": "J mic + full conditioning",
+      "outcome": "NON-CONVERGENT",
+      "capped_at": 90
+    }
+  ]
+}

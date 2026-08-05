@@ -1,0 +1,333 @@
+name: Triplex CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  allocation-guard:
+    name: RT Allocation Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Build with counting allocator
+        run: |
+          cd apps/android/native-media
+          cargo build --release --features "rt-alloc-counting"
+      
+      - name: Run RT allocation soak tests
+        run: |
+          cd apps/android/native-media
+          cargo test --release --features "rt-alloc-counting" rt_alloc vad_rt -- --nocapture
+      
+      - name: Verify zero allocations
+        run: |
+          cd apps/android/native-media
+          cargo test --release --features "rt-alloc-counting" -- verify_zero_allocations
+      
+      - name: Archive allocation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocation-report
+          path: |
+            apps/android/native-media/target/release/allocation-report.json
+            apps/android/native-media/target/release/vad-allocations.json
+          retention-days: 30
+
+  transport-validation:
+    name: Transport Validation
+    runs-on: ubuntu-latest
+    needs: allocation-guard
+    timeout-minutes: 45
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: triplex
+          POSTGRES_PASSWORD: triplex
+          POSTGRES_DB: triplex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      plivo-simulator:
+        image: plivo/plivo-simulator:latest
+        ports:
+          - 8000:8000
+        options: >-
+          --health-cmd "curl -f http://localhost:8000/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+      
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/validation-requirements.txt
+      
+      - name: Build native library
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          arguments: :app:externalNativeBuildDebug
+      
+      - name: Run transport validation suite
+        run: |
+          cd apps/android
+          ./gradlew :telephony-plivo:transportValidation --stacktrace
+      
+      - name: Run simulated transport checks
+        run: |
+          python scripts/compare.py --mode=simulated --output=artifacts/simulated-validation.json
+      
+      - name: Run Kotlin transport validation
+        run: |
+          python scripts/compare.py --mode=kotlin --output=artifacts/kotlin-transport-validation.json
+      
+      - name: Run C++ transport validation
+        run: |
+          python scripts/compare.py --mode=cpp --output=artifacts/cpp-transport-validation.json
+      
+      - name: Validate latency gates
+        run: |
+          python scripts/validate_gates.py \
+            --simulated artifacts/simulated-validation.json \
+            --kotlin artifacts/kotlin-transport-validation.json \
+            --cpp artifacts/cpp-transport-validation.json \
+            --p50-limit 120 \
+            --p95-limit 150 \
+            --drop-limit 0
+      
+      - name: Archive validation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transport-validation-evidence
+          path: |
+            artifacts/simulated-validation.json
+            artifacts/kotlin-transport-validation.json
+            artifacts/cpp-transport-validation.json
+            apps/android/telephony-plivo/build/reports/
+          retention-days: 30
+      
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const simulated = JSON.parse(fs.readFileSync('artifacts/simulated-validation.json', 'utf8'));
+            const kotlin = JSON.parse(fs.readFileSync('artifacts/kotlin-transport-validation.json', 'utf8'));
+            const cpp = JSON.parse(fs.readFileSync('artifacts/cpp-transport-validation.json', 'utf8'));
+            
+            const body = `## Transport Validation Results
+            
+            | Metric | Simulated | Kotlin | C++ | Gate |
+            |--------|-----------|--------|-----|------|
+            | p50 Latency | ${simulated.latency.p50}ms | ${kotlin.latency.p50}ms | ${cpp.latency.p50}ms | ≤120ms |
+            | p95 Latency | ${simulated.latency.p95}ms | ${kotlin.latency.p95}ms | ${cpp.latency.p95}ms | ≤150ms |
+            | Packet Drops | ${simulated.packets.dropped} | ${kotlin.packets.dropped} | ${cpp.packets.dropped} | 0 |
+            | Passed | ${simulated.passed ? '✅' : '❌'} | ${kotlin.passed ? '✅' : '❌'} | ${cpp.passed ? '✅' : '❌'} | - |
+            `;
+            
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+  gateway-validation:
+    name: Gateway Integration Tests
+    runs-on: ubuntu-latest
+    needs: transport-validation
+    timeout-minutes: 20
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: triplex
+          POSTGRES_PASSWORD: triplex
+          POSTGRES_DB: triplex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          cd gateway
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Run gateway tests
+        run: |
+          cd gateway
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=html
+        env:
+          DATABASE_URL: postgresql+asyncpg://triplex:triplex@localhost:5432/triplex
+      
+      - name: Archive test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-test-results
+          path: |
+            gateway/htmlcov/
+            gateway/coverage.xml
+          retention-days: 30
+
+  android-build:
+    name: Android Build & Test
+    runs-on: ubuntu-latest
+    needs: transport-validation
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+      
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+      
+      - name: Build Android app
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          arguments: :app:assembleDebug --stacktrace
+      
+      - name: Run Android unit tests
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          arguments: :app:testDebugUnitTest --stacktrace
+      
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            apps/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+      
+      - name: Archive test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-results
+          path: |
+            apps/android/app/build/reports/
+            apps/android/app/build/test-results/
+          retention-days: 30
+
+  evidence-gate:
+    name: Evidence Collection Gate
+    runs-on: ubuntu-latest
+    needs: [allocation-guard, transport-validation, gateway-validation, android-build]
+    if: always()
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+      
+      - name: Validate evidence completeness
+        run: |
+          python scripts/validate_evidence.py \
+            --allocation all-artifacts/allocation-report/ \
+            --transport all-artifacts/transport-validation-evidence/ \
+            --gateway all-artifacts/gateway-test-results/ \
+            --android all-artifacts/android-test-results/
+      
+      - name: Create evidence manifest
+        run: |
+          python scripts/create_manifest.py \
+            --output artifacts/evidence-manifest.json \
+            --commit ${{ github.sha }} \
+            --pr ${{ github.event.pull_request.number || 'N/A' }} \
+            --run ${{ github.run_id }}
+      
+      - name: Archive evidence manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-manifest
+          path: artifacts/evidence-manifest.json
+          retention-days: 90
+      
+      - name: Check all gates passed
+        run: |
+          if [ -f "artifacts/gate-status.json" ]; then
+            python scripts/check_gates.py --manifest artifacts/evidence-manifest.json
+          else
+            echo "No gate status file found"
+            exit 1
+          fi

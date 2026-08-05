@@ -1,0 +1,6 @@
+{
+    global:
+        Java_dev_triplex_*;
+    local:
+        *;
+};

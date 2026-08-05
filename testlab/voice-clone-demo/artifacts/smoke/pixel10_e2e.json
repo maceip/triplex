@@ -1,0 +1,19 @@
+{
+  "label": "Pixel 10 Pro Fold end-to-end voice-clone loop",
+  "device": "Pixel 10 Pro Fold (5C091FDCG0000Y), Android 17 / API 37, arm64-v8a",
+  "proven": [
+    "app installs and runs on Android 17",
+    "enrollment via adb reverse tunnel",
+    "silence guard rejected 7.5s room tone without a model call",
+    "microphone captured 13.5s of real speech acoustically and prepared a clone profile",
+    "runaway generation on the noisy mic reference returned 504 and recovered",
+    "clean reference: synthesis 200 OK, WAV delivered and played on device"
+  ],
+  "file": "pixel10_e2e_preview.wav",
+  "sha256": "8a42a5a13d8b93a6dec92c5c2672e44a2083de61c33af626d387b2f317a437f1",
+  "duration_seconds": 9.36,
+  "sample_rate_hz": 24000,
+  "placement": "REMOTE_TTS",
+  "known_issue": "mic-captured acoustic references can trigger non-converging generation; service answers 504 and recycles",
+  "date": "2026-08-04"
+}

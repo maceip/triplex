@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PSTNValidationResult",
+  "type": "object",
+  "required": ["passed", "production_ready", "physical_pstn_evidence", "latency", "packets", "errors", "timestamp"],
+  "properties": {
+    "passed": {
+      "type": "boolean",
+      "description": "Overall validation result"
+    },
+    "production_ready": {
+      "type": "boolean",
+      "description": "Production gate status - all gates passed"
+    },
+    "physical_pstn_evidence": {
+      "type": "boolean",
+      "description": "Physical PSTN call evidence collected"
+    },
+    "latency": {
+      "type": "object",
+      "required": ["p50", "p95", "p99", "min", "max", "mean", "count"],
+      "properties": {
+        "p50": { "type": "number", "minimum": 0, "description": "p50 latency in seconds" },
+        "p95": { "type": "number", "minimum": 0, "description": "p95 latency in seconds" },
+        "p99": { "type": "number", "minimum": 0 },
+        "min": { "type": "number", "minimum": 0 },
+        "max": { "type": "number", "minimum": 0 },
+        "mean": { "type": "number", "minimum": 0 },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "packets": {
+      "type": "object",
+      "required": ["sent", "received", "dropped", "outOfOrder", "duplicates", "avgJitterMs"],
+      "properties": {
+        "sent": { "type": "integer", "minimum": 0 },
+        "received": { "type": "integer", "minimum": 0 },
+        "dropped": { "type": "integer", "minimum": 0 },
+        "outOfOrder": { "type": "integer", "minimum": 0 },
+        "duplicates": { "type": "integer", "minimum": 0 },
+        "avgJitterMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Gate failure reasons"
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "durationMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total test duration in milliseconds"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "call_sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "call_uuid": { "type": "string" },
+          "call_type": { "type": "string", "enum": ["inbound", "outbound"] },
+          "duration_seconds": { "type": "number" },
+          "establishment_time_ms": { "type": "number" },
+          "passed": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TransportValidationResult",
+  "type": "object",
+  "required": ["passed", "latency", "packets", "errors", "warnings", "durationMs", "timestamp"],
+  "properties": {
+    "passed": {
+      "type": "boolean",
+      "description": "Overall validation result"
+    },
+    "latency": {
+      "type": "object",
+      "required": ["p50", "p95", "p99", "min", "max", "mean", "count"],
+      "properties": {
+        "p50": { "type": "number", "minimum": 0 },
+        "p95": { "type": "number", "minimum": 0 },
+        "p99": { "type": "number", "minimum": 0 },
+        "min": { "type": "number", "minimum": 0 },
+        "max": { "type": "number", "minimum": 0 },
+        "mean": { "type": "number" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "packets": {
+      "type": "object",
+      "required": ["sent", "received", "dropped", "outOfOrder", "duplicates", "avgJitterMs"],
+      "properties": {
+        "sent": { "type": "integer", "minimum": 0 },
+        "received": { "type": "integer", "minimum": 0 },
+        "dropped": { "type": "integer", "minimum": 0 },
+        "outOfOrder": { "type": "integer", "minimum": 0 },
+        "duplicates": { "type": "integer", "minimum": 0 },
+        "avgJitterMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "durationMs": {
+      "type": "number",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
