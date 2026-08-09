@@ -33,6 +33,24 @@ class TransportValidationArtifactTest {
             evaluate("tls_1_3_with_srtp") {
                 check(secureVerdict(NegotiatedTlsVersion.TLS_1_3, true).accepted)
             },
+            evaluate("pjsip_allowed_tls_mask_with_srtp") {
+                val verdict = DirectTransportSecurityPolicy.evaluate(
+                    TransportSecuritySnapshot(
+                        registered = true,
+                        registrationStatus = 200,
+                        tlsConnected = true,
+                        tlsProtocol = NegotiatedTlsVersion.TLS_1_2.pjSslProtocol or
+                            NegotiatedTlsVersion.TLS_1_3.pjSslProtocol,
+                        tlsCipher = 0x009D,
+                        tlsVerifyStatus = 0,
+                        tlsLastStatus = 0,
+                        mediaActive = true,
+                        srtpActive = true,
+                    ),
+                    requireActiveMedia = true,
+                )
+                check(verdict.accepted)
+            },
             evaluate("missing_srtp_rejected") {
                 val verdict = secureVerdict(NegotiatedTlsVersion.TLS_1_3, false)
                 check(!verdict.accepted)

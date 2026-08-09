@@ -2,6 +2,7 @@ package dev.triplex.data.repository
 
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.remote.GatewayApi
+import dev.triplex.data.remote.OutboundRouteGrant
 import dev.triplex.data.remote.RegisterDeviceRequest
 import dev.triplex.domain.model.DeviceRegistration
 import dev.triplex.domain.model.TaskDefinition
@@ -101,7 +102,7 @@ class UserRepository @Inject constructor(
         val token = storage.getDeviceToken() ?: return false
         return try {
             val status = api.getDeviceStatus(token)
-            status["ready"]?.toBoolean() ?: false
+            status.ready
         } catch (e: Exception) {
             Timber.e(e, "Failed to get device status")
             false
@@ -161,6 +162,20 @@ class TaskRepository @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Failed to start task")
             Result.Error("Failed to start task: ${e.message}", e)
+        }
+    }
+
+    suspend fun authorizeOutbound(
+        taskId: String,
+        destinationNumber: String
+    ): Result<OutboundRouteGrant> {
+        val token = storage.getDeviceToken() ?: return Result.Error("Not authenticated")
+
+        return try {
+            Result.Success(api.authorizeOutbound(taskId, destinationNumber, token))
+        } catch (e: Exception) {
+            Timber.e(e, "Outbound authorization failed")
+            Result.Error("Failed to authorize outbound call: ${e.message}", e)
         }
     }
 

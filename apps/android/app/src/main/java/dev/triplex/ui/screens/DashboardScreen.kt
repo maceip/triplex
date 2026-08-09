@@ -152,7 +152,10 @@ fun DashboardScreen(
                     else -> items(state.tasks, key = { it.id }) { task ->
                         TaskListItem(
                             task = task,
-                            onClick = { onTaskSelected(task.id) },
+                            onClick = {
+                                viewModel.startTask(task.id)
+                                onTaskSelected(task.id)
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

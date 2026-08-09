@@ -51,8 +51,22 @@ enum class NegotiatedTlsVersion(val pjSslProtocol: Long) {
     ;
 
     companion object {
+        private val allowedProtocolMask = entries.fold(0L) { mask, version ->
+            mask or version.pjSslProtocol
+        }
+
         fun fromPjSslProtocol(value: Long): NegotiatedTlsVersion? =
             entries.firstOrNull { it.pjSslProtocol == value }
+
+        /**
+         * PJSIP's Mbed TLS backend may expose the effective protocol mask
+         * (TLS 1.2 | TLS 1.3) after a successful handshake instead of one
+         * exact enum bit. The transport itself is configured with only these
+         * two versions, so a non-empty subset of that mask is acceptable;
+         * any legacy or unknown protocol bit remains fail-closed.
+         */
+        fun isAllowedProtocolMask(value: Long): Boolean =
+            value != 0L && value and allowedProtocolMask == value
     }
 }
 
@@ -98,7 +112,9 @@ internal object DirectTransportSecurityPolicy {
             failures += TransportSecurityFailure.REGISTRATION_NOT_OK
         }
         if (!snapshot.tlsConnected) failures += TransportSecurityFailure.TLS_NOT_CONNECTED
-        if (version == null) failures += TransportSecurityFailure.TLS_VERSION_NOT_ALLOWED
+        if (!NegotiatedTlsVersion.isAllowedProtocolMask(snapshot.tlsProtocol)) {
+            failures += TransportSecurityFailure.TLS_VERSION_NOT_ALLOWED
+        }
         if (snapshot.tlsCipher == 0L) failures += TransportSecurityFailure.TLS_CIPHER_MISSING
         if (snapshot.tlsVerifyStatus != 0L) {
             failures += TransportSecurityFailure.CERTIFICATE_NOT_VERIFIED

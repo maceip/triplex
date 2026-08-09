@@ -1,46 +1,61 @@
 # Production gateway for bridge.secure.build.
 #
-# Caddy terminates TLS and reverse-proxies bridge.secure.build to
-# 127.0.0.1:9090, so the gateway binds loopback only and is never exposed
+# Caddy terminates TLS and reverse-proxies the configured public hostname to
+# the configured loopback bind, so the gateway is never exposed directly.
 # directly. Media never transits this service: the answer webhook returns
 # routing XML and Plivo connects the call to the device.
 #
-# Secrets come from .env.prod alongside this file (not in the repo).
+# Configuration and secrets come from .env alongside this file (not in repo).
 services:
   gateway:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9090:8000"
+      - "${GATEWAY_BIND_ADDRESS:?required}:${GATEWAY_HOST_PORT:?required}:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://triplex:${POSTGRES_PASSWORD}@db:5432/triplex
+      - DATABASE_URL=${DATABASE_URL:?required}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
-      - PLIVO_AUTH_TOKEN=${PLIVO_AUTH_TOKEN}
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
-      - VOICE_SERVICE_URL=${VOICE_SERVICE_URL:-http://127.0.0.1:8801}
+      - PLIVO_AUTH_ID=${PLIVO_AUTH_ID:?required}
+      - PLIVO_AUTH_TOKEN=${PLIVO_AUTH_TOKEN:?required}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?required}
+      - PLIVO_SIP_DOMAIN=${PLIVO_SIP_DOMAIN:?required}
+      - OUTBOUND_ROUTE_SIGNING_KEY=${OUTBOUND_ROUTE_SIGNING_KEY:?required}
+      - OUTBOUND_ROUTE_TTL_SECONDS=${OUTBOUND_ROUTE_TTL_SECONDS:?required}
+      - VOICE_SERVICE_URL=${VOICE_SERVICE_URL:?required}
+      - UNAVAILABLE_MESSAGE=${UNAVAILABLE_MESSAGE:?required}
+      - DEFAULT_RATE_LIMIT=${DEFAULT_RATE_LIMIT:?required}
+      - REGISTRATION_RATE_LIMIT=${REGISTRATION_RATE_LIMIT:?required}
+      - WEBHOOK_RATE_LIMIT=${WEBHOOK_RATE_LIMIT:?required}
+      - ROUTE_RATE_LIMIT=${ROUTE_RATE_LIMIT:?required}
+      - DATABASE_STARTUP_ATTEMPTS=${DATABASE_STARTUP_ATTEMPTS:?required}
+      - DATABASE_BACKOFF_MIN_SECONDS=${DATABASE_BACKOFF_MIN_SECONDS:?required}
+      - DATABASE_BACKOFF_MAX_SECONDS=${DATABASE_BACKOFF_MAX_SECONDS:?required}
+      - DATABASE_POOL_RECYCLE_SECONDS=${DATABASE_POOL_RECYCLE_SECONDS:?required}
     depends_on:
       db:
         condition: service_healthy
+    stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/ready')\""]
+      interval: ${GATEWAY_HEALTH_INTERVAL:?required}
+      timeout: ${GATEWAY_HEALTH_TIMEOUT:?required}
+      retries: ${GATEWAY_HEALTH_RETRIES:?required}
+      start_period: ${GATEWAY_HEALTH_START_PERIOD:?required}
 
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=triplex
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=triplex
+      - POSTGRES_USER=${POSTGRES_USER:?required}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?required}
+      - POSTGRES_DB=${POSTGRES_DB:?required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U triplex"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?required} -d ${POSTGRES_DB:?required}"]
+      interval: ${POSTGRES_HEALTH_INTERVAL:?required}
+      timeout: ${POSTGRES_HEALTH_TIMEOUT:?required}
+      retries: ${POSTGRES_HEALTH_RETRIES:?required}
 
 volumes:
   postgres_data:

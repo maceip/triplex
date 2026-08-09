@@ -25,6 +25,7 @@ data class VoiceProfile(
 )
 
 enum class TaskType {
+    ITEM_RETURN,
     APPOINTMENT_MODIFY,
     RESERVATION_UPDATE
 }

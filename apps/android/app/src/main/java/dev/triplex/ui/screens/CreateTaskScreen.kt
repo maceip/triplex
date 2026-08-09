@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.hilt.navigation.compose.hiltViewModel
+import dev.triplex.domain.model.AutomationCatalog
 import dev.triplex.domain.model.TaskType
 import dev.triplex.ui.components.OutlinedTextInput
 import dev.triplex.ui.components.TriplexBackground
@@ -61,7 +62,7 @@ fun CreateTaskScreen(
             containerColor = Color.Transparent,
             topBar = {
                 TriplexTopBar(
-                    title = "New task",
+                    title = "New automation",
                     navigationIcon = Icons.AutoMirrored.Filled.ArrowBack,
                     onNavigationClick = onDismiss
                 )
@@ -79,17 +80,28 @@ fun CreateTaskScreen(
             ) {
                 TriplexReveal {
                     TriplexScreenHeader(
-                        eyebrow = "BOUNDED CALL",
-                        title = "What should Triplex handle?",
-                        description = "Choose a task type, give the minimum details, and stay in control of the call."
+                        eyebrow = "OUTBOUND AUTOMATION",
+                        title = "What can Triplex take off your plate?",
+                        description = "Start with a specific, reviewable job. Triplex calls in your voice and stays inside the limits you set."
                     )
                 }
 
                 TriplexReveal(delayMillis = motion.staggerMillis) {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(spacing.medium)
+                        verticalArrangement = Arrangement.spacedBy(spacing.medium)
                     ) {
+                        TaskTypeCard(
+                            title = AutomationCatalog.ReturnSamsungItem.title,
+                            description = AutomationCatalog.ReturnSamsungItem.description,
+                            selected = state.selectedType == TaskType.ITEM_RETURN,
+                            onClick = { viewModel.selectTaskType(TaskType.ITEM_RETURN) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing.medium)
+                        ) {
                         TaskTypeCard(
                             title = "Appointment",
                             description = "Move or update a scheduled visit",
@@ -104,6 +116,7 @@ fun CreateTaskScreen(
                             onClick = { viewModel.selectTaskType(TaskType.RESERVATION_UPDATE) },
                             modifier = Modifier.weight(1f)
                         )
+                        }
                     }
                 }
 
@@ -135,7 +148,7 @@ fun CreateTaskScreen(
                                 modifier = Modifier.padding(spacing.xLarge),
                                 verticalArrangement = Arrangement.spacedBy(spacing.large)
                             ) {
-                                Text("Call details", style = MaterialTheme.typography.titleLarge)
+                                Text("Automation details", style = MaterialTheme.typography.titleLarge)
                                 TaskParameterInput(
                                     type = taskType,
                                     params = state.params,
@@ -178,7 +191,7 @@ fun CreateTaskScreen(
                         modifier = Modifier.weight(1f)
                     )
                     TriplexButton(
-                        text = "Create task",
+                        text = "Create automation",
                         onClick = viewModel::createTask,
                         enabled = state.selectedType != null && state.destinationNumber.isNotBlank(),
                         loading = state.loading,
@@ -231,6 +244,53 @@ fun TaskParameterInput(
     val spacing = TriplexDesign.spacing
     Column(verticalArrangement = Arrangement.spacedBy(spacing.large)) {
         when (type) {
+            TaskType.ITEM_RETURN -> {
+                Text(
+                    "Samsung Support - 1-800-SAMSUNG",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                OutlinedTextInput(
+                    value = params["product"].orEmpty(),
+                    onValueChange = { onParamChange("product", it) },
+                    label = "Item or model",
+                    placeholder = "Galaxy S26 Ultra",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextInput(
+                    value = params["order_number"].orEmpty(),
+                    onValueChange = { onParamChange("order_number", it) },
+                    label = "Order number",
+                    placeholder = "US123456789",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextInput(
+                    value = params["return_reason"].orEmpty(),
+                    onValueChange = { onParamChange("return_reason", it) },
+                    label = "Why are you returning it?",
+                    placeholder = "The screen arrived cracked",
+                    singleLine = false,
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextInput(
+                    value = params["desired_outcome"].orEmpty(),
+                    onValueChange = { onParamChange("desired_outcome", it) },
+                    label = "What should success look like?",
+                    placeholder = "A full refund to the original payment method",
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextInput(
+                    value = params["approval_policy"].orEmpty(),
+                    onValueChange = { onParamChange("approval_policy", it) },
+                    label = "Limits Triplex must not cross",
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             TaskType.APPOINTMENT_MODIFY -> {
                 OutlinedTextInput(
                     value = params["appointment_id"].orEmpty(),

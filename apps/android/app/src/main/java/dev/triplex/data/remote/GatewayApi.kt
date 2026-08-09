@@ -68,11 +68,60 @@ data class RegisterDeviceRequest(
 )
 
 @Serializable
+data class DeviceStatusResponse(
+    val ready: Boolean,
+    val sip_endpoint: String? = null,
+)
+
+@Serializable
+data class ScreeningSession(
+    val call_uuid: String,
+    val caller_number: String,
+    val called_number: String,
+    val status: String,
+    val transcript: String,
+    val confidence: String? = null,
+    val decision: String? = null,
+    val created_at: String,
+    val updated_at: String
+)
+
+@Serializable
+data class ScreeningDecisionRequest(
+    val decision: String,
+    val automation_id: String? = null,
+)
+
+@Serializable
 data class CreateTaskRequest(
     val task_type: String,
     val destination_number: String,
     val task_params: Map<String, String>
 )
+
+@Serializable
+data class AuthorizeOutboundRequest(
+    val destination_number: String
+)
+
+@Serializable
+data class OutboundRouteGrant(
+    val task_id: String,
+    val sip_uri: String,
+    val header_name: String,
+    val token: String,
+    val expires_at: String,
+    val expires_in_seconds: Int
+) {
+    init {
+        require(header_name == "X-PH-TriplexGrant")
+        require(sip_uri.startsWith("sips:"))
+        require('\r' !in sip_uri && '\n' !in sip_uri)
+        require(token.isNotBlank() && token.length <= 4_096)
+        require('\r' !in token && '\n' !in token)
+        require(expires_in_seconds in 1..300)
+    }
+}
 
 @Singleton
 class GatewayApi @Inject constructor(
@@ -114,9 +163,30 @@ class GatewayApi @Inject constructor(
         }
     }
 
-    suspend fun getDeviceStatus(deviceToken: String): Map<String, String> {
+    suspend fun getDeviceStatus(deviceToken: String): DeviceStatusResponse {
         return client.get("/devices/status") {
             header("X-Device-Token", deviceToken)
+        }.body()
+    }
+
+    suspend fun getActiveScreening(deviceToken: String): ScreeningSession? {
+        val response = client.get("/screening/active") {
+            header("X-Device-Token", deviceToken)
+        }
+        if (response.status != HttpStatusCode.OK) return null
+        return response.body()
+    }
+
+    suspend fun decideScreening(
+        callUuid: String,
+        decision: String,
+        automationId: String?,
+        deviceToken: String
+    ): ScreeningSession {
+        return client.post("/screening/$callUuid/decision") {
+            contentType(ContentType.Application.Json)
+            header("X-Device-Token", deviceToken)
+            setBody(ScreeningDecisionRequest(decision, automationId))
         }.body()
     }
 
@@ -145,6 +215,18 @@ class GatewayApi @Inject constructor(
     suspend fun getTask(taskId: String, deviceToken: String): TaskDefinition {
         return client.get("/tasks/$taskId") {
             header("X-Device-Token", deviceToken)
+        }.body()
+    }
+
+    suspend fun authorizeOutbound(
+        taskId: String,
+        destinationNumber: String,
+        deviceToken: String
+    ): OutboundRouteGrant {
+        return client.post("/tasks/$taskId/authorize-outbound") {
+            contentType(ContentType.Application.Json)
+            header("X-Device-Token", deviceToken)
+            setBody(AuthorizeOutboundRequest(destinationNumber))
         }.body()
     }
 

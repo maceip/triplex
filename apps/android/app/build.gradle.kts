@@ -30,6 +30,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "GATEWAY_URL", "\"${localProperties.getProperty("gateway.url", "http://10.0.2.2:8000")}\"")
+        buildConfigField("String", "AGENT_TRANSFER_NUMBER", "\"${localProperties.getProperty("plivo.agent.transfer.number", "")}\"")
     }
 
     buildTypes {
@@ -90,11 +91,16 @@ android {
             pickFirsts += "**/libtriplex_native_media.so"
         }
     }
+
+    androidResources {
+        noCompress += "zip"
+    }
 }
 
 dependencies {
     implementation(project(":telephony-plivo"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    implementation("com.google.ai.edge.litert:litert:2.1.3")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -112,7 +118,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.client.logging)
@@ -125,7 +131,9 @@ dependencies {
     implementation(libs.androidx.security.crypto)
 
     implementation(libs.timber)
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    implementation("com.google.protobuf:protobuf-javalite:4.34.1")
+    implementation("com.getkeepsafe.relinker:relinker:1.4.5")
+    implementation("com.google.guava:guava:33.6.0-android")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

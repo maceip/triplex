@@ -29,14 +29,27 @@ class TransportSecurityPolicyTest {
     }
 
     @Test
-    fun rejectsDeprecatedOrConfiguredProtocolMasksAsNegotiatedVersions() {
-        val tls10 = secureSnapshot(NegotiatedTlsVersion.TLS_1_2, true).copy(tlsProtocol = 1L shl 2)
+    fun acceptsBackendMaskContainingOnlyTls12AndTls13() {
         val configuredMask = secureSnapshot(NegotiatedTlsVersion.TLS_1_2, true).copy(
             tlsProtocol = NegotiatedTlsVersion.TLS_1_2.pjSslProtocol or
                 NegotiatedTlsVersion.TLS_1_3.pjSslProtocol,
         )
 
-        for (snapshot in listOf(tls10, configuredMask)) {
+        val verdict = DirectTransportSecurityPolicy.evaluate(configuredMask, true)
+
+        assertTrue(verdict.accepted)
+        assertEquals(null, verdict.tlsVersion)
+    }
+
+    @Test
+    fun rejectsDeprecatedEmptyOrMixedProtocolMasks() {
+        val tls10 = secureSnapshot(NegotiatedTlsVersion.TLS_1_2, true).copy(tlsProtocol = 1L shl 2)
+        val empty = secureSnapshot(NegotiatedTlsVersion.TLS_1_2, true).copy(tlsProtocol = 0)
+        val mixedMask = secureSnapshot(NegotiatedTlsVersion.TLS_1_2, true).copy(
+            tlsProtocol = NegotiatedTlsVersion.TLS_1_2.pjSslProtocol or (1L shl 2),
+        )
+
+        for (snapshot in listOf(tls10, empty, mixedMask)) {
             val verdict = DirectTransportSecurityPolicy.evaluate(snapshot, true)
             assertFalse(verdict.accepted)
             assertTrue(

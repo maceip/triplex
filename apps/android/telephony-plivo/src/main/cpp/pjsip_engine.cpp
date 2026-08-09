@@ -25,12 +25,33 @@
 
 namespace {
 
+constexpr size_t kIncomingPcmCapacity = 16'000 * 30;
+std::array<int16_t, kIncomingPcmCapacity> incoming_pcm{};
+std::atomic<uint64_t> incoming_pcm_read{0};
+std::atomic<uint64_t> incoming_pcm_write{0};
+
+void capture_incoming_pcm(const int16_t *samples, size_t count) {
+  if (samples == nullptr || count == 0) {
+    return;
+  }
+  const uint64_t write = incoming_pcm_write.load(std::memory_order_relaxed);
+  const uint64_t read = incoming_pcm_read.load(std::memory_order_acquire);
+  const size_t free_samples = static_cast<size_t>(
+      kIncomingPcmCapacity - std::min<uint64_t>(write - read, kIncomingPcmCapacity));
+  const size_t accepted = std::min(count, free_samples);
+  for (size_t index = 0; index < accepted; ++index) {
+    incoming_pcm[(write + index) % kIncomingPcmCapacity] = samples[index];
+  }
+  incoming_pcm_write.store(write + accepted, std::memory_order_release);
+}
+
 constexpr size_t kUsernameCapacity = 128;
 constexpr size_t kPasswordCapacity = 256;
 constexpr size_t kDomainCapacity = 256;
 constexpr size_t kRealmCapacity = 256;
 constexpr size_t kPathCapacity = 1024;
 constexpr size_t kUriCapacity = 640;
+constexpr size_t kGrantHeaderValueCapacity = 4096;
 constexpr size_t kEventCapacity = 64;
 constexpr uint32_t kCanonicalClockRate = 16'000;
 constexpr uint32_t kCanonicalSamplesPerFrame = 160;
@@ -156,6 +177,17 @@ bool valid_secure_sip_uri(const char *uri) {
     return false;
   }
   return std::strchr(uri, '\r') == nullptr && std::strchr(uri, '\n') == nullptr;
+}
+
+bool valid_route_grant_header(const char *name, const char *value) {
+  if (name == nullptr || value == nullptr ||
+      std::strcmp(name, "X-PH-TriplexGrant") != 0) {
+    return false;
+  }
+  const size_t length = strnlen(value, kGrantHeaderValueCapacity);
+  return length >= 16 && length < kGrantHeaderValueCapacity &&
+         std::strchr(value, '\r') == nullptr &&
+         std::strchr(value, '\n') == nullptr;
 }
 
 uint64_t math_stat_mean(const pj_math_stat &statistic) {
@@ -381,6 +413,8 @@ pj_status_t media_port_put_frame(pjmedia_port *port, pjmedia_frame *frame) {
   }
 
   const int64_t callback_mono_ns = monotonic_raw_ns();
+  capture_incoming_pcm(static_cast<const int16_t *>(frame->buf),
+                       kCanonicalSamplesPerFrame);
   const bool accepted = triplex_media_capture_push(
       engine->media_runtime, static_cast<const int16_t *>(frame->buf),
       kCanonicalSamplesPerFrame, callback_mono_ns,
@@ -394,6 +428,23 @@ pj_status_t media_port_put_frame(pjmedia_port *port, pjmedia_frame *frame) {
   // bridge must keep its clock and the opposite direction alive.
   PJ_UNUSED_ARG(accepted);
   return PJ_SUCCESS;
+}
+
+size_t drain_incoming_pcm_internal(TriplexPjsipEngine *engine,
+                                   int16_t *samples, size_t capacity) {
+  if (engine == nullptr || samples == nullptr || capacity == 0) {
+    return 0;
+  }
+  const uint64_t read = incoming_pcm_read.load(std::memory_order_relaxed);
+  const uint64_t write = incoming_pcm_write.load(std::memory_order_acquire);
+  const size_t available = static_cast<size_t>(
+      std::min<uint64_t>(write - read, kIncomingPcmCapacity));
+  const size_t count = std::min(available, capacity);
+  for (size_t index = 0; index < count; ++index) {
+    samples[index] = incoming_pcm[(read + index) % kIncomingPcmCapacity];
+  }
+  incoming_pcm_read.store(read + count, std::memory_order_release);
+  return count;
 }
 
 void on_registration_state(pjsua_acc_id account_id, pjsua_reg_info *info) {
@@ -775,9 +826,9 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ip_change_cfg.shutdown_tp = PJ_TRUE;
   account_config.ip_change_cfg.hangup_calls = PJ_FALSE;
   account_config.ip_change_cfg.reinv_use_update = PJ_TRUE;
-  account_config.ipv6_sip_use = PJSUA_IPV6_ENABLED_PREFER_IPV4;
-  account_config.ipv6_media_use = PJSUA_IPV6_ENABLED_PREFER_IPV4;
-  account_config.nat64_opt = PJSUA_NAT64_ENABLED;
+  account_config.ipv6_sip_use = PJSUA_IPV6_DISABLED;
+  account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
+  account_config.nat64_opt = PJSUA_NAT64_DISABLED;
   account_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
   account_config.srtp_secure_signaling = 1;
   account_config.cred_count = 1;
@@ -829,6 +880,11 @@ void ensure_pj_thread_registered() {
 }
 
 } // namespace
+
+extern "C" size_t triplex_pjsip_drain_incoming_pcm(
+    TriplexPjsipEngine *engine, int16_t *samples, size_t capacity) {
+  return drain_incoming_pcm_internal(engine, samples, capacity);
+}
 
 extern "C" TriplexPjsipEngine *
 triplex_pjsip_create(const TriplexSipConfig *config) {
@@ -904,15 +960,25 @@ extern "C" int triplex_pjsip_answer(TriplexPjsipEngine *engine,
 }
 
 extern "C" int triplex_pjsip_make_call(TriplexPjsipEngine *engine,
-                                       const char *authorized_sip_uri) {
-  if (engine == nullptr || !valid_secure_sip_uri(authorized_sip_uri)) {
+                                       const char *authorized_sip_uri,
+                                       const char *grant_header_name,
+                                       const char *grant_header_value) {
+  if (engine == nullptr || !valid_secure_sip_uri(authorized_sip_uri) ||
+      !valid_route_grant_header(grant_header_name, grant_header_value)) {
     return PJ_EINVAL;
   }
   ensure_pj_thread_registered();
   pj_str_t destination = pj_str(const_cast<char *>(authorized_sip_uri));
+  pj_str_t header_name = pj_str(const_cast<char *>(grant_header_name));
+  pj_str_t header_value = pj_str(const_cast<char *>(grant_header_value));
+  pjsip_generic_string_hdr grant_header{};
+  pjsip_generic_string_hdr_init2(&grant_header, &header_name, &header_value);
+  pjsua_msg_data message_data{};
+  pjsua_msg_data_init(&message_data);
+  pj_list_push_back(&message_data.hdr_list, &grant_header);
   pjsua_call_id call_id = PJSUA_INVALID_ID;
   const pj_status_t status = pjsua_call_make_call(
-      engine->account_id, &destination, 0, nullptr, nullptr, &call_id);
+      engine->account_id, &destination, 0, nullptr, &message_data, &call_id);
   if (status == PJ_SUCCESS) {
     engine->active_call_id.store(call_id, std::memory_order_release);
   }
@@ -1022,6 +1088,50 @@ extern "C" int triplex_pjsip_start_probe_tone(TriplexPjsipEngine *engine,
       std::this_thread::sleep_until(next_deadline);
     }
   });
+  return PJ_SUCCESS;
+}
+
+extern "C" int triplex_pjsip_start_synthesis(TriplexPjsipEngine *engine,
+                                              const int16_t *samples,
+                                              size_t sample_count) {
+  if (engine == nullptr || samples == nullptr || sample_count == 0 ||
+      sample_count > kCanonicalClockRate * 60) {
+    return PJ_EINVAL;
+  }
+  std::vector<int16_t> audio(samples, samples + sample_count);
+  const uint32_t generation =
+      engine->tone_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+  if (engine->tone_thread.joinable()) {
+    engine->tone_thread.join();
+  }
+  const uint32_t epoch = triplex_media_epoch(engine->media_runtime);
+  engine->tone_thread = std::thread(
+      [engine, generation, epoch, audio = std::move(audio)] {
+        std::array<int16_t, TRIPLEX_FRAME_SAMPLES> frame{};
+        const size_t frame_count =
+            (audio.size() + TRIPLEX_FRAME_SAMPLES - 1) / TRIPLEX_FRAME_SAMPLES;
+        auto next_deadline = std::chrono::steady_clock::now();
+        for (size_t frame_index = 0; frame_index < frame_count; ++frame_index) {
+          if (engine->tone_generation.load(std::memory_order_acquire) != generation ||
+              triplex_media_epoch(engine->media_runtime) != epoch) {
+            return;
+          }
+          frame.fill(0);
+          const size_t offset = frame_index * TRIPLEX_FRAME_SAMPLES;
+          const size_t count =
+              std::min<size_t>(TRIPLEX_FRAME_SAMPLES, audio.size() - offset);
+          std::copy_n(audio.data() + offset, count, frame.data());
+          next_deadline += std::chrono::milliseconds(10);
+          const uint16_t flags =
+              frame_index + 1 == frame_count ? TRIPLEX_FLAG_FINAL_CHUNK : 0;
+          if (!triplex_media_synth_push(engine->media_runtime, frame.data(),
+                                        frame.size(), monotonic_raw_ns(), epoch,
+                                        flags, TRIPLEX_STREAM_SYNTH)) {
+            return;
+          }
+          std::this_thread::sleep_until(next_deadline);
+        }
+      });
   return PJ_SUCCESS;
 }
 

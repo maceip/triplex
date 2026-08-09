@@ -93,7 +93,9 @@ TriplexPjsipEngine *triplex_pjsip_create(const TriplexSipConfig *config);
 int triplex_pjsip_start(TriplexPjsipEngine *engine);
 int triplex_pjsip_answer(TriplexPjsipEngine *engine, int32_t call_id);
 int triplex_pjsip_make_call(TriplexPjsipEngine *engine,
-                            const char *authorized_sip_uri);
+                            const char *authorized_sip_uri,
+                            const char *grant_header_name,
+                            const char *grant_header_value);
 int triplex_pjsip_send_dtmf(TriplexPjsipEngine *engine, int32_t call_id,
                             const char *digits);
 uint32_t triplex_pjsip_interrupt(TriplexPjsipEngine *engine);
@@ -104,8 +106,12 @@ int triplex_pjsip_reregister(TriplexPjsipEngine *engine);
 int triplex_pjsip_start_probe_tone(TriplexPjsipEngine *engine,
                                    uint32_t frequency_hz, uint32_t duration_ms,
                                    uint16_t amplitude);
+int triplex_pjsip_start_synthesis(TriplexPjsipEngine *engine,
+                                  const int16_t *samples, size_t sample_count);
 size_t triplex_pjsip_drain_events(TriplexPjsipEngine *engine,
                                   TriplexSipEvent *events, size_t capacity);
+size_t triplex_pjsip_drain_incoming_pcm(TriplexPjsipEngine *engine,
+                                        int16_t *samples, size_t capacity);
 bool triplex_pjsip_metrics_snapshot(TriplexPjsipEngine *engine,
                                     TriplexPjsipMetrics *output);
 void triplex_pjsip_destroy(TriplexPjsipEngine *engine);

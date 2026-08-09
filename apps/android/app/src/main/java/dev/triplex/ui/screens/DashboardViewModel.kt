@@ -5,9 +5,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.triplex.data.repository.Result
 import dev.triplex.data.repository.TaskRepository
-import dev.triplex.data.repository.UserRepository
 import dev.triplex.domain.model.AgentStatus
 import dev.triplex.domain.model.TaskState
+import dev.triplex.telephony.sip.OutboundCallCoordinator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +18,7 @@ import javax.inject.Inject
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
-    private val userRepository: UserRepository
+    private val outboundCallCoordinator: OutboundCallCoordinator,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(TaskState())
@@ -73,7 +73,7 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch {
             _agentStatus.value = AgentStatus.PREPARING
             
-            when (val result = taskRepository.startTask(taskId)) {
+            when (val result = outboundCallCoordinator.startTask(taskId)) {
                 is Result.Success -> {
                     _state.value = _state.value.copy(activeTask = result.data)
                     _agentStatus.value = AgentStatus.ACTIVE

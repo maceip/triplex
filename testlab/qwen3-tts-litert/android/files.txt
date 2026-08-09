@@ -1,0 +1,16 @@
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/.gitignore
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/build.gradle.kts
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/AndroidManifest.xml
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/assets/tokenizer_test_vectors.json
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/java/com/google/ai/edge/examples/text_to_speech_lm/MainActivity.kt
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/java/com/google/ai/edge/examples/text_to_speech_lm/Npy.kt
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/java/com/google/ai/edge/examples/text_to_speech_lm/Qwen3TtsEngine.kt
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/app/src/main/java/com/google/ai/edge/examples/text_to_speech_lm/QwenBpeTokenizer.kt
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/build.gradle.kts
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/gradle.properties
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/gradle/wrapper/gradle-wrapper.jar
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/gradle/wrapper/gradle-wrapper.properties
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/gradlew
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/gradlew.bat
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/install_to_device.sh
+compiled_model_api/text_to_speech_lm/kotlin_cpu/android/settings.gradle.kts

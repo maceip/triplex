@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name="dev.triplex.debug.DevelopmentControlReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="dev.triplex.debug.PROVISION" />
+                <action android:name="dev.triplex.debug.OUTBOUND_SMOKE" />
+                <action android:name="dev.triplex.debug.HANGUP" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="dev.triplex.debug.DebugSipProvisioningReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="dev.triplex.debug.PROVISION_SIP" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

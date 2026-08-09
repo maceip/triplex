@@ -23,7 +23,12 @@ internal object NativePjsip {
 
     @JvmStatic external fun nativeStart(handle: Long): Int
     @JvmStatic external fun nativeAnswer(handle: Long, callId: Int): Int
-    @JvmStatic external fun nativeMakeCall(handle: Long, authorizedSipUri: String): Int
+    @JvmStatic external fun nativeMakeCall(
+        handle: Long,
+        authorizedSipUri: String,
+        grantHeaderName: String,
+        grantHeaderValue: String,
+    ): Int
     @JvmStatic external fun nativeSendDtmf(handle: Long, callId: Int, digits: String): Int
     @JvmStatic external fun nativeInterrupt(handle: Long): Long
     @JvmStatic external fun nativeHangup(handle: Long, callId: Int, sipStatus: Int): Int
@@ -35,8 +40,10 @@ internal object NativePjsip {
         durationMs: Int,
         amplitude: Int,
     ): Int
+    @JvmStatic external fun nativeStartSynthesis(handle: Long, samples: ShortArray): Int
 
     @JvmStatic external fun nativeDrainEvents(handle: Long, output: ByteBuffer): Int
+    @JvmStatic external fun nativeDrainIncomingPcm(handle: Long, output: ByteBuffer): Int
     @JvmStatic external fun nativeMetricsSnapshot(handle: Long, output: ByteBuffer): Boolean
     @JvmStatic external fun nativeDestroy(handle: Long)
 }

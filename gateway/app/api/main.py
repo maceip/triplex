@@ -1,36 +1,62 @@
 import logging
-import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
 from uuid import UUID, uuid4
 
 import httpx
-
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import PlainTextResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from sqlalchemy import select
-
-from ..db.models import Base, SipCredentialDB, VoiceProfileDB
+from ..config import settings
+from ..db.models import Base, ScreeningSessionDB, SipCredentialDB, VoiceProfileDB
 from ..models.schemas import (
-    AuditLog,
     DeviceRegistration,
-    InboundPolicy,
     TaskDefinition,
+    TaskType,
     UserAccount,
-    VoiceProfile,
 )
-from ..services import AuthService, RoutingService, TaskService, AuditService
+from ..services import AuditService, AuthService, RoutingService, TaskService
 from ..services.plivo_signature import verify_v3
-
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+asyncpg://triplex:triplex@localhost:5432/triplex"
+from ..services.route_grants import (
+    OutboundRouteService,
+    RouteGrantError,
+    normalize_e164,
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+logger = logging.getLogger("triplex.gateway")
+
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=settings.database_pool_recycle_seconds,
+)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -50,19 +76,41 @@ async def get_current_user_id(
         if user_id:
             return user_id
         raise HTTPException(status_code=401, detail="Invalid device token")
-    
+
     raise HTTPException(status_code=401, detail="Missing authentication")
+
+
+@retry(
+    retry=retry_if_exception_type((OSError, SQLAlchemyError)),
+    wait=wait_exponential(
+        multiplier=settings.database_backoff_min_seconds,
+        min=settings.database_backoff_min_seconds,
+        max=settings.database_backoff_max_seconds,
+    ),
+    stop=stop_after_attempt(settings.database_startup_attempts),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+async def _initialize_database() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await _initialize_database()
     yield
     await engine.dispose()
 
 
 app = FastAPI(title="Triplex Control Gateway", version="0.1.0", lifespan=lifespan)
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[settings.default_rate_limit],
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 
 class RegisterUserRequest(BaseModel):
@@ -79,7 +127,7 @@ class SeedSipCredentialsRequest(BaseModel):
     email: str
     username: str
     password: str
-    domain: str = "phone.plivo.com"
+    domain: str
     realm: Optional[str] = None
 
 
@@ -97,27 +145,80 @@ class RegisterDeviceRequest(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    task_type: str
+    task_type: TaskType
     destination_number: str
     task_params: dict
 
+    @field_validator("task_type", mode="before")
+    @classmethod
+    def normalize_task_type(cls, value: str) -> str:
+        return value.lower() if isinstance(value, str) else value
+
+    @field_validator("destination_number")
+    @classmethod
+    def validate_destination(cls, value: str) -> str:
+        return normalize_e164(value)
+
+
+class AuthorizeOutboundRequest(BaseModel):
+    destination_number: str
+
+
+class OutboundRouteGrantResponse(BaseModel):
+    task_id: UUID
+    sip_uri: str
+    header_name: str
+    token: str
+    expires_at: datetime
+    expires_in_seconds: int
+
+
+class ScreeningDecisionRequest(BaseModel):
+    decision: Literal["accept", "decline", "agent"]
+    automation_id: Optional[Literal["book_zoom", "explain_delay"]] = None
+
+
+class ScreeningSessionResponse(BaseModel):
+    call_uuid: str
+    caller_number: str
+    called_number: str
+    status: str
+    transcript: str
+    confidence: Optional[str] = None
+    decision: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
 
 @app.get("/health")
+@limiter.exempt
 async def health():
     return {"status": "ok"}
 
 
+@app.get("/ready")
+@limiter.exempt
+async def ready(db: AsyncSession = Depends(get_db)):
+    try:
+        await db.execute(text("SELECT 1"))
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail="Database unavailable") from error
+    return {"status": "ready"}
+
+
 @app.post("/auth/register", response_model=EnrollmentResponse)
+@limiter.limit(settings.registration_rate_limit)
 async def register_user(
-    request: RegisterUserRequest,
+    request: Request,
+    payload: RegisterUserRequest,
     db: AsyncSession = Depends(get_db),
 ):
     auth_service = AuthService(db)
-    existing = await auth_service.get_user_by_email(request.email)
+    existing = await auth_service.get_user_by_email(payload.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = await auth_service.create_user(request.email, request.phone_number)
+    user = await auth_service.create_user(payload.email, payload.phone_number)
     # Mint the device token server-side so subsequent X-Device-Token calls
     # validate against a persisted registration.
     device_token = await auth_service.generate_device_token(user.id)
@@ -174,10 +275,10 @@ async def seed_sip_credentials(
     admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
     db: AsyncSession = Depends(get_db),
 ):
-    expected = os.environ.get("ADMIN_API_KEY")
-    if not expected:
+    configured_admin_key = settings.admin_api_key
+    if configured_admin_key is None:
         raise HTTPException(status_code=503, detail="Admin API disabled")
-    if admin_key != expected:
+    if admin_key != configured_admin_key.get_secret_value():
         raise HTTPException(status_code=403, detail="Invalid admin key")
 
     auth_service = AuthService(db)
@@ -227,7 +328,7 @@ async def get_sip_credentials(
     )
 
 
-VOICE_SERVICE_URL = os.environ.get("VOICE_SERVICE_URL", "http://host.docker.internal:8801")
+VOICE_SERVICE_URL = str(settings.voice_service_url).rstrip("/")
 # Synthesis placement for cloned voices. On-device (LOCAL) is preferred and
 # the Android TtsModel seam is ready, but no maintained on-device zero-shot
 # cloning runtime exists yet, so the offload is explicit and recorded.
@@ -300,7 +401,9 @@ async def upload_voice_profile(
                 files={"reference": ("reference.wav", payload, "audio/wav")},
             )
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"voice service unreachable: {exc}") from exc
+        raise HTTPException(
+            status_code=503, detail=f"voice service unreachable: {exc}"
+        ) from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail=response.text)
     prepared = response.json()
@@ -377,7 +480,9 @@ async def voice_preview(
                 json={"text": request.text},
             )
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"voice service unreachable: {exc}") from exc
+        raise HTTPException(
+            status_code=503, detail=f"voice service unreachable: {exc}"
+        ) from exc
     if response.status_code >= 400:
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
@@ -417,15 +522,6 @@ async def revoke_voice_profile(
     return VoiceProfileStatus()
 
 
-PLIVO_AUTH_TOKEN = os.environ.get("PLIVO_AUTH_TOKEN", "")
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
-UNAVAILABLE_MESSAGE = os.environ.get(
-    "UNAVAILABLE_MESSAGE",
-    "Thanks for calling Triplex. The assistant is not available to take this "
-    "call right now. Please try again later.",
-)
-
-logger = logging.getLogger("triplex.gateway")
 # Uvicorn configures only its own loggers, so call routing decisions would
 # otherwise never reach the container log.
 logging.basicConfig(
@@ -441,6 +537,68 @@ def _normalize_number(raw: str) -> str:
     return digits
 
 
+def _form_value(form_data, name: str) -> str:
+    """Read Plivo form keys case-insensitively without logging grant values."""
+    expected = name.casefold()
+    for key, value in form_data.items():
+        if str(key).casefold() == expected:
+            return str(value)
+    return ""
+
+
+def _screening_response(session: ScreeningSessionDB) -> ScreeningSessionResponse:
+    return ScreeningSessionResponse(
+        call_uuid=session.call_uuid,
+        caller_number=session.caller_number,
+        called_number=session.called_number,
+        status=session.status,
+        transcript=session.transcript,
+        confidence=session.confidence,
+        decision=session.decision,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+async def _transfer_screening_call(call_uuid: str, route_path: str) -> None:
+    configured_auth_id = settings.plivo_auth_id
+    if configured_auth_id is None:
+        raise HTTPException(status_code=503, detail="Plivo call control is not configured")
+    auth_id = configured_auth_id.get_secret_value()
+    route_url = f"{str(settings.public_base_url).rstrip('/')}{route_path}"
+    api_url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{call_uuid}/"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                api_url,
+                auth=(auth_id, settings.plivo_auth_token.get_secret_value()),
+                data={
+                    "legs": "aleg",
+                    "aleg_url": route_url,
+                    "aleg_method": "POST",
+                },
+            )
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=503, detail="Plivo call control unavailable") from error
+    if response.status_code >= 400:
+        logger.error(
+            "screening transfer failed uuid=%s route=%s status=%s",
+            call_uuid,
+            route_path,
+            response.status_code,
+        )
+        raise HTTPException(status_code=502, detail="Plivo rejected the call decision")
+
+
+def _outbound_route_service(db: AsyncSession) -> OutboundRouteService:
+    return OutboundRouteService(
+        db=db,
+        signing_key=settings.outbound_route_signing_key.get_secret_value(),
+        ttl_seconds=settings.outbound_route_ttl_seconds,
+        sip_domain=settings.plivo_sip_domain,
+    )
+
+
 def _require_plivo_signature(
     request: Request, path: str, params: dict[str, str] | None = None
 ) -> None:
@@ -449,14 +607,9 @@ def _require_plivo_signature(
     Fails closed: with no auth token configured the endpoint refuses to act,
     rather than trusting whatever reaches a public URL.
     """
-    if not PLIVO_AUTH_TOKEN or not PUBLIC_BASE_URL:
-        raise HTTPException(
-            status_code=503,
-            detail="Webhook validation is not configured",
-        )
     valid = verify_v3(
-        auth_token=PLIVO_AUTH_TOKEN,
-        url=f"{PUBLIC_BASE_URL}{path}",
+        auth_token=settings.plivo_auth_token.get_secret_value(),
+        url=f"{str(settings.public_base_url).rstrip('/')}{path}",
         nonce=request.headers.get("X-Plivo-Signature-V3-Nonce"),
         signature_header=request.headers.get("X-Plivo-Signature-V3"),
         method=request.method,
@@ -478,6 +631,7 @@ def _require_plivo_signature(
 
 
 @app.post("/answer", response_class=PlainTextResponse)
+@limiter.limit(settings.webhook_rate_limit)
 async def plivo_answer(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -491,32 +645,337 @@ async def plivo_answer(
     form_data = await request.form()
     # V3 signs the POST parameters, so the body is read before validating.
     _require_plivo_signature(
-        request, "/answer", {k: str(v) for k, v in form_data.items()}
+        request, str(request.url.path), {k: str(v) for k, v in form_data.items()}
     )
+    direction = str(form_data.get("Direction", "inbound")).casefold()
+    token = _form_value(form_data, OutboundRouteService.HEADER_NAME)
+    # Plivo labels authenticated SIP-endpoint calls as inbound to the attached
+    # application. A valid one-use grant, not that provider direction label,
+    # is the authoritative outbound discriminator.
+    if token:
+
+        endpoint_candidates = [
+            _form_value(form_data, "From"),
+            _form_value(form_data, "SIP-H-From"),
+            _form_value(form_data, "SIP-H-P-Asserted-Identity"),
+        ]
+        try:
+            authorization = await _outbound_route_service(db).consume(
+                token=token,
+                provider_call_uuid=_form_value(form_data, "CallUUID"),
+                destination_value=_form_value(form_data, "To"),
+                endpoint_candidates=endpoint_candidates,
+            )
+        except RouteGrantError as error:
+            logger.warning(
+                "outbound call rejected uuid=%s reason=%s",
+                _form_value(form_data, "CallUUID"),
+                str(error),
+            )
+            raise HTTPException(status_code=403, detail=str(error)) from error
+
+        await AuditService(db).log(
+            authorization.user_id,
+            "outbound_route_consumed",
+            {
+                "task_id": str(authorization.task_id),
+                "call_uuid": authorization.provider_call_uuid,
+                "destination": authorization.destination_number,
+                "transport": "DIRECT_SIP",
+            },
+        )
+        logger.info(
+            "outbound call authorized uuid=%s task=%s to=%s",
+            authorization.provider_call_uuid,
+            authorization.task_id,
+            authorization.destination_number,
+        )
+        xml_response = RoutingService(db).generate_outbound_dial_xml(
+            authorization.destination_number,
+            authorization.caller_id,
+        )
+        return Response(content=xml_response, media_type="application/xml")
+    if direction == "outbound":
+        raise HTTPException(status_code=403, detail="Missing outbound route grant")
+
     called_number = _normalize_number(str(form_data.get("To", "")))
     caller_id = str(form_data.get("From", ""))
     call_uuid = str(form_data.get("CallUUID", ""))
 
     routing_service = RoutingService(db)
-    xml_response, decision = await routing_service.generate_routing_xml(
-        called_number, caller_id
+    user_id = await routing_service.get_number_assignment(called_number)
+    sip_endpoint = (
+        await routing_service.get_device_endpoint(user_id) if user_id is not None else None
     )
-    if decision != "route_to_device":
-        xml_response = routing_service.generate_unavailable_xml(UNAVAILABLE_MESSAGE)
+    if user_id is None or sip_endpoint is None or not call_uuid:
+        xml_response = routing_service.generate_unavailable_xml(
+            settings.unavailable_message
+        )
+        decision = "unavailable"
+    else:
+        session = await db.get(ScreeningSessionDB, call_uuid)
+        if session is None:
+            session = ScreeningSessionDB(
+                call_uuid=call_uuid,
+                user_id=user_id,
+                caller_number=caller_id,
+                called_number=called_number,
+                sip_endpoint=sip_endpoint,
+                status="asking",
+                transcript="",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+            db.add(session)
+        else:
+            session.sip_endpoint = sip_endpoint
+            session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        await db.commit()
+        xml_response = routing_service.generate_screening_prompt_xml(
+            call_uuid, str(settings.public_base_url)
+        )
+        decision = "screen_caller"
 
     logger.info(
         "inbound call uuid=%s to=%s from=%s decision=%s",
-        call_uuid, called_number, caller_id, decision,
+        call_uuid,
+        called_number,
+        caller_id,
+        decision,
     )
-    return xml_response
+    return Response(content=xml_response, media_type="application/xml")
+
+
+async def _verified_screening_form(request: Request) -> dict[str, str]:
+    form_data = await request.form()
+    params = {str(key): str(value) for key, value in form_data.items()}
+    _require_plivo_signature(request, str(request.url.path), params)
+    return params
+
+
+@app.post("/screening/{call_uuid}/interim")
+async def screening_interim(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    form_data = await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    stable = _form_value(form_data, "StableSpeech").strip()
+    unstable = _form_value(form_data, "UnstableSpeech").strip()
+    transcript = " ".join(part for part in (stable, unstable) if part).strip()
+    if transcript:
+        session.transcript = transcript[:4000]
+        session.status = "asking"
+        await db.commit()
+    return {"status": "updated"}
+
+
+@app.post("/screening/{call_uuid}/result", response_class=PlainTextResponse)
+async def screening_result(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    form_data = await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    speech = _form_value(form_data, "Speech").strip()
+    if speech:
+        session.transcript = speech[:4000]
+    elif not session.transcript:
+        session.transcript = "The caller did not provide a reason."
+    session.confidence = _form_value(form_data, "SpeechConfidenceScore")[:24] or None
+    session.status = "ready"
+    await db.commit()
+    xml = RoutingService(db).generate_screening_hold_xml(
+        call_uuid, str(settings.public_base_url)
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.post("/screening/{call_uuid}/hold", response_class=PlainTextResponse)
+async def screening_hold(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    if session.decision is None:
+        session.status = "holding"
+        await db.commit()
+    xml = RoutingService(db).generate_screening_hold_xml(
+        call_uuid, str(settings.public_base_url)
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.post("/screening/{call_uuid}/connect", response_class=PlainTextResponse)
+async def screening_connect(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    session.status = "connected"
+    await db.commit()
+    xml = RoutingService(db).generate_screening_connect_xml(
+        session.sip_endpoint, session.caller_number
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.post("/screening/{call_uuid}/decline", response_class=PlainTextResponse)
+async def screening_decline(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    await _verified_screening_form(request)
+    return Response(
+        content=RoutingService(db).generate_screening_decline_xml(),
+        media_type="application/xml",
+    )
+
+
+@app.post("/screening/{call_uuid}/agent", response_class=PlainTextResponse)
+async def screening_agent(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    session.status = "agent"
+    await db.commit()
+    return Response(
+        content=RoutingService(db).generate_screening_automation_xml(
+            call_uuid, str(settings.public_base_url), "book_zoom"
+        ),
+        media_type="application/xml",
+    )
+
+
+@app.post(
+    "/screening/{call_uuid}/automation/{automation_id}",
+    response_class=PlainTextResponse,
+)
+async def screening_automation(
+    call_uuid: str,
+    automation_id: Literal["book_zoom", "explain_delay"],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    session.status = "agent"
+    session.decision = automation_id
+    await db.commit()
+    return Response(
+        content=RoutingService(db).generate_screening_automation_xml(
+            call_uuid, str(settings.public_base_url), automation_id
+        ),
+        media_type="application/xml",
+    )
+
+
+@app.post("/screening/{call_uuid}/message-interim")
+async def screening_message_interim(
+    call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    form_data = await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    stable = _form_value(form_data, "StableSpeech").strip()
+    unstable = _form_value(form_data, "UnstableSpeech").strip()
+    speech = " ".join(part for part in (stable, unstable) if part).strip()
+    if speech:
+        first_reply = session.transcript.split("\nAdditional message:", 1)[0].rstrip()
+        session.transcript = f"{first_reply}\nAdditional message: {speech}"[:4000]
+        session.status = "agent"
+        await db.commit()
+    return {"status": "updated"}
+
+
+@app.post("/screening/{call_uuid}/message", response_class=PlainTextResponse)
+async def screening_message(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
+    form_data = await _verified_screening_form(request)
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    speech = _form_value(form_data, "Speech").strip()
+    if speech:
+        first_reply = session.transcript.split("\nAdditional message:", 1)[0].rstrip()
+        session.transcript = f"{first_reply}\nAdditional message: {speech}"[:4000]
+    session.status = "completed"
+    await db.commit()
+    closing_message = (
+        "Thank you. I have the meeting details and will send them for confirmation. Goodbye."
+        if session.decision == "book_zoom"
+        else "Thank you. I will pass that along. Goodbye."
+    )
+    return Response(
+        content=f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response><Speak language="en-US" voice="Polly.Joanna">{closing_message}</Speak><Hangup/></Response>''',
+        media_type="application/xml",
+    )
+
+
+@app.get("/screening/active", response_model=Optional[ScreeningSessionResponse])
+async def active_screening_session(
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ScreeningSessionDB)
+        .where(
+            ScreeningSessionDB.user_id == user_id,
+            ScreeningSessionDB.status.in_(
+                ["asking", "ready", "holding", "agent", "connecting", "connected"]
+            ),
+            ScreeningSessionDB.expires_at > datetime.now(timezone.utc),
+        )
+        .order_by(ScreeningSessionDB.created_at.desc())
+        .limit(1)
+    )
+    session = result.scalar_one_or_none()
+    return _screening_response(session) if session is not None else None
+
+
+@app.post(
+    "/screening/{call_uuid}/decision", response_model=ScreeningSessionResponse
+)
+async def decide_screening_session(
+    call_uuid: str,
+    payload: ScreeningDecisionRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await db.get(ScreeningSessionDB, call_uuid)
+    if session is None or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Screening session not found")
+    if session.status not in {"asking", "ready", "holding"}:
+        raise HTTPException(status_code=409, detail="Call has already been decided")
+
+    automation_id = payload.automation_id or "book_zoom"
+    target = {
+        "accept": "connect",
+        "decline": "decline",
+        "agent": f"automation/{automation_id}",
+    }[payload.decision]
+    await _transfer_screening_call(call_uuid, f"/screening/{call_uuid}/{target}")
+    session.decision = automation_id if payload.decision == "agent" else payload.decision
+    session.decided_at = datetime.now(timezone.utc)
+    session.status = {
+        "accept": "connecting",
+        "decline": "declined",
+        "agent": "agent",
+    }[payload.decision]
+    await db.commit()
+    await db.refresh(session)
+    return _screening_response(session)
 
 
 @app.post("/hangup")
 async def plivo_hangup(request: Request, db: AsyncSession = Depends(get_db)):
     form_data = await request.form()
     _require_plivo_signature(
-        request, "/hangup", {k: str(v) for k, v in form_data.items()}
+        request, str(request.url.path), {k: str(v) for k, v in form_data.items()}
     )
+    call_uuid = str(form_data.get("CallUUID", ""))
+    session = await db.get(ScreeningSessionDB, call_uuid) if call_uuid else None
+    if session is not None and session.status not in {"declined", "completed"}:
+        session.status = "completed"
+        await db.commit()
     logger.info(
         "call ended uuid=%s duration=%s status=%s",
         form_data.get("CallUUID", ""),
@@ -528,6 +987,7 @@ async def plivo_hangup(request: Request, db: AsyncSession = Depends(get_db)):
 
 # Legacy paths kept so a misconfigured application still reaches the handler.
 @app.post("/plivo/answer", response_class=PlainTextResponse)
+@limiter.limit(settings.webhook_rate_limit)
 async def plivo_answer_legacy(request: Request, db: AsyncSession = Depends(get_db)):
     return await plivo_answer(request, db)
 
@@ -585,11 +1045,50 @@ async def start_task(
     task = await task_service.get_task(task_id)
     if not task or task.user_id != user_id:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     task = await task_service.start_task(task_id)
     if not task:
         raise HTTPException(status_code=400, detail="Task cannot be started")
     return task
+
+
+@app.post(
+    "/tasks/{task_id}/authorize-outbound",
+    response_model=OutboundRouteGrantResponse,
+)
+@limiter.limit(settings.route_rate_limit)
+async def authorize_outbound(
+    request: Request,
+    task_id: UUID,
+    payload: AuthorizeOutboundRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Authorize one direct Android SIP call for one typed task.
+
+    The response is consumed by PJSIP on Android. Plivo calls `/answer` with
+    the grant header before connecting PSTN; no media or SIP signaling crosses
+    this HTTPS endpoint.
+    """
+    try:
+        route_service = _outbound_route_service(db)
+        grant = await route_service.issue(
+            user_id=user_id,
+            task_id=task_id,
+            requested_destination=payload.destination_number,
+        )
+    except RouteGrantError as error:
+        status = 503 if "not configured" in str(error) else 409
+        raise HTTPException(status_code=status, detail=str(error)) from error
+
+    return OutboundRouteGrantResponse(
+        task_id=grant.task_id,
+        sip_uri=grant.sip_uri,
+        header_name=grant.header_name,
+        token=grant.token,
+        expires_at=grant.expires_at,
+        expires_in_seconds=route_service.ttl_seconds,
+    )
 
 
 @app.post("/tasks/{task_id}/stop", response_model=TaskDefinition)
@@ -602,7 +1101,7 @@ async def stop_task(
     task = await task_service.get_task(task_id)
     if not task or task.user_id != user_id:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     task = await task_service.stop_task(task_id)
     if not task:
         raise HTTPException(status_code=400, detail="Task cannot be stopped")

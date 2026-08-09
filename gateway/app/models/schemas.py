@@ -36,7 +36,7 @@ class VirtualNumber(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-TaskType = Literal["appointment_modify", "reservation_update"]
+TaskType = Literal["item_return", "appointment_modify", "reservation_update"]
 TaskStatus = Literal["pending", "active", "completed", "failed", "stopped"]
 
 

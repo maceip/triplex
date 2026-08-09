@@ -32,3 +32,22 @@ apps/android/.cxx/
 apps/android/**/.cxx/
 apps/android/local.properties
 apps/android/.kotlin/
+
+# Model and generated inference artifacts are stored in the private Hugging Face
+# repo macmacmacmac/triplex-model-artifacts. See MODEL_ARTIFACTS.md.
+*.tflite
+*.onnx
+**/saved_model.pb
+apps/android/app/src/main/assets/cmudict.txt
+apps/android/app/src/main/assets/models/
+apps/android/app/src/main/assets/soda/
+apps/android/bert_pack/
+apps/android/supertonic_pack/
+apps/android/ve_pack/
+testlab/litert-aot/assets/
+testlab/litert-aot/models/
+testlab/litert-aot/out/
+testlab/litert-aot/tf_out/
+testlab/litert-aot/tmp/
+testlab/litert-aot/verify/
+**/.gradle/

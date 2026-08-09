@@ -48,6 +48,7 @@ Gateway will be available at `http://localhost:8000`
 
 ### Health
 - `GET /health` - Health check
+- `GET /ready` - Database-backed readiness check
 
 ### Authentication
 - `POST /auth/register` - Register user account
@@ -58,7 +59,8 @@ Gateway will be available at `http://localhost:8000`
 - `GET /devices/status` - Get device connection status
 
 ### Plivo Webhooks
-- `POST /plivo/answer` - Generate routing XML for inbound calls
+- `POST /answer` - Signature-validated inbound and outbound endpoint routing
+- `POST /plivo/answer` - Legacy alias for `/answer`
 - `POST /plivo/hangup` - Log call hangup
 
 ### Task Management
@@ -66,6 +68,7 @@ Gateway will be available at `http://localhost:8000`
 - `GET /tasks` - List tasks (optional status filter)
 - `GET /tasks/{task_id}` - Get task details
 - `POST /tasks/{task_id}/start` - Start task execution
+- `POST /tasks/{task_id}/authorize-outbound` - One-use direct-SIP route grant
 - `POST /tasks/{task_id}/stop` - Stop task execution
 
 ## Database Migrations
@@ -78,11 +81,28 @@ alembic revision --autogenerate -m "description"
 alembic upgrade head
 ```
 
-## Environment Variables
+## Production configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| DATABASE_URL | Required | PostgreSQL connection string |
+Production has no implicit operational defaults. `pydantic-settings` validates
+the environment at process startup, and Compose uses `${NAME:?required}` so a
+missing value fails before a container is replaced. The untracked `.env` must
+define:
+
+- database: `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`;
+- public/provider: `PUBLIC_BASE_URL`, `PLIVO_AUTH_TOKEN`, `PLIVO_SIP_DOMAIN`;
+- route authorization: `OUTBOUND_ROUTE_SIGNING_KEY`,
+  `OUTBOUND_ROUTE_TTL_SECONDS`;
+- services/policy: `VOICE_SERVICE_URL`, `UNAVAILABLE_MESSAGE`, optional
+  `ADMIN_API_KEY`;
+- resilience: `DEFAULT_RATE_LIMIT`, `REGISTRATION_RATE_LIMIT`,
+  `WEBHOOK_RATE_LIMIT`, `ROUTE_RATE_LIMIT`, `DATABASE_STARTUP_ATTEMPTS`,
+  `DATABASE_BACKOFF_MIN_SECONDS`, `DATABASE_BACKOFF_MAX_SECONDS`, and
+  `DATABASE_POOL_RECYCLE_SECONDS`;
+- container binding/health: `GATEWAY_BIND_ADDRESS`, `GATEWAY_HOST_PORT`,
+  `GATEWAY_HEALTH_INTERVAL`, `GATEWAY_HEALTH_TIMEOUT`,
+  `GATEWAY_HEALTH_RETRIES`, `GATEWAY_HEALTH_START_PERIOD`,
+  `POSTGRES_HEALTH_INTERVAL`, `POSTGRES_HEALTH_TIMEOUT`, and
+  `POSTGRES_HEALTH_RETRIES`.
 
 ## Placement Visibility
 

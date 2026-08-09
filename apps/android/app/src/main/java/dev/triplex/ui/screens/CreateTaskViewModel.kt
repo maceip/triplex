@@ -31,7 +31,19 @@ class CreateTaskViewModel @Inject constructor(
     fun selectTaskType(type: TaskType) {
         _state.value = _state.value.copy(
             selectedType = type,
-            params = emptyMap(),
+            destinationNumber = if (type == TaskType.ITEM_RETURN) {
+                SAMSUNG_SUPPORT_NUMBER
+            } else {
+                ""
+            },
+            params = if (type == TaskType.ITEM_RETURN) {
+                mapOf(
+                    "company" to "Samsung",
+                    "approval_policy" to "Do not accept fees, store credit, or a replacement without my approval",
+                )
+            } else {
+                emptyMap()
+            },
             error = null
         )
     }
@@ -74,5 +86,9 @@ class CreateTaskViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private companion object {
+        const val SAMSUNG_SUPPORT_NUMBER = "+18007267864"
     }
 }

@@ -37,6 +37,8 @@ class SipRegistrationConfig(
 data class AuthorizedSipRoute(
     val taskId: String,
     val sipUri: String,
+    val headerName: String,
+    val headerValue: String,
     val expiresAtElapsedRealtimeNs: Long,
 ) {
     init {
@@ -46,12 +48,19 @@ data class AuthorizedSipRoute(
             "Outbound route grants must require end-to-end secure signaling"
         }
         require('\r' !in sipUri && '\n' !in sipUri)
+        require(headerName == OUTBOUND_GRANT_HEADER)
+        require(headerValue.length in 16..4_095)
+        require('\r' !in headerValue && '\n' !in headerValue)
     }
 
     fun requireUsable() {
         require(SystemClock.elapsedRealtimeNanos() < expiresAtElapsedRealtimeNs) {
             "Gateway route grant has expired"
         }
+    }
+
+    private companion object {
+        const val OUTBOUND_GRANT_HEADER = "X-PH-TriplexGrant"
     }
 }
 
@@ -147,7 +156,7 @@ class PlivoSipEndpoint(context: Context) : AutoCloseable {
 
     fun makeAuthorizedCall(route: AuthorizedSipRoute): CompletableFuture<Int> = submitNative {
         route.requireUsable()
-        NativePjsip.nativeMakeCall(it, route.sipUri)
+        NativePjsip.nativeMakeCall(it, route.sipUri, route.headerName, route.headerValue)
     }
 
     fun sendDtmf(callId: Int, digits: String): CompletableFuture<Int> = submitNative {
@@ -176,6 +185,11 @@ class PlivoSipEndpoint(context: Context) : AutoCloseable {
         NativePjsip.nativeStartProbeTone(it, frequencyHz, durationMs, amplitude)
     }
 
+    fun startSynthesis(samples: ShortArray): CompletableFuture<Int> = submitNative {
+        require(samples.isNotEmpty()) { "Synthesis PCM cannot be empty" }
+        NativePjsip.nativeStartSynthesis(it, samples)
+    }
+
     /** Non-RT polling surface. No native callback enters Kotlin. */
     fun pollEvidence(): CompletableFuture<EndpointEvidence> = submitNative { handle ->
         eventBuffer.clear()
@@ -188,6 +202,13 @@ class PlivoSipEndpoint(context: Context) : AutoCloseable {
         val metrics = TransportEvidenceDecoder.decode(metricsBuffer)
         updateState(metrics)
         EndpointEvidence(state, events, metrics)
+    }
+
+    /** Drains far-end RTP PCM into a direct native-order buffer without an RT callback. */
+    fun drainIncomingPcm(output: ByteBuffer): CompletableFuture<Int> = submitNative { handle ->
+        require(output.isDirect) { "Incoming PCM output must be a direct buffer" }
+        output.clear()
+        NativePjsip.nativeDrainIncomingPcm(handle, output)
     }
 
     private fun updateState(metrics: DirectTransportMetrics) {

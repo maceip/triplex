@@ -37,9 +37,6 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var agentBridge: AgentBridge
 
-    @Inject
-    lateinit var ttsBenchmark: dev.triplex.tts.TtsBenchmark
-
     private val runtimeManager by lazy {
         NativeRuntimeManager.getInstance(applicationContext)
     }
@@ -49,12 +46,6 @@ class MainActivity : ComponentActivity() {
     private val demoReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                // adb shell am broadcast -a dev.triplex.TTS_BENCH [--ei threads 1]
-                "dev.triplex.TTS_BENCH" -> lifecycleScope.launch {
-                    val threads = intent.getIntExtra("threads", 4)
-                    Timber.i("TTS-BENCH starting (threads=%d)", threads)
-                    Timber.i("TTS-BENCH results:\n%s", ttsBenchmark.run(threads))
-                }
                 else -> agentBridge.runDemoTurn(
                     bargeIn = intent?.getBooleanExtra("barge_in", false) == true
                 )
@@ -85,14 +76,13 @@ class MainActivity : ComponentActivity() {
                     return@launch
                 }
 
-                // Baseline agent session (loopback mode until direct call
-                // media is proven; must not run concurrently with a call).
-                if (agentBridge.start() && BuildConfig.DEBUG) {
+                // The baseline agent is a loopback-only diagnostic session.
+                // It owns the same media rings as PJSIP, so do not start it
+                // automatically for the live SIP/PSTN path.
+                if (BuildConfig.DEBUG) {
                     registerReceiver(
                         demoReceiver,
-                        IntentFilter("dev.triplex.DEMO_TURN").apply {
-                            addAction("dev.triplex.TTS_BENCH")
-                        },
+                        IntentFilter("dev.triplex.DEMO_TURN"),
                         RECEIVER_EXPORTED
                     )
                 }

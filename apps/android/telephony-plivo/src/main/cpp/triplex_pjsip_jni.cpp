@@ -113,15 +113,33 @@ Java_dev_triplex_telephony_plivo_NativePjsip_nativeAnswer(JNIEnv *, jclass,
 
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_triplex_telephony_plivo_NativePjsip_nativeMakeCall(
-    JNIEnv *environment, jclass, jlong handle, jstring authorized_sip_uri) {
-  if (authorized_sip_uri == nullptr) {
+    JNIEnv *environment, jclass, jlong handle, jstring authorized_sip_uri,
+    jstring grant_header_name, jstring grant_header_value) {
+  if (authorized_sip_uri == nullptr || grant_header_name == nullptr ||
+      grant_header_value == nullptr) {
     return -1;
   }
   const char *uri = environment->GetStringUTFChars(authorized_sip_uri, nullptr);
   if (uri == nullptr) {
     return -1;
   }
-  const int status = triplex_pjsip_make_call(from_handle(handle), uri);
+  const char *header_name =
+      environment->GetStringUTFChars(grant_header_name, nullptr);
+  if (header_name == nullptr) {
+    environment->ReleaseStringUTFChars(authorized_sip_uri, uri);
+    return -1;
+  }
+  const char *header_value =
+      environment->GetStringUTFChars(grant_header_value, nullptr);
+  if (header_value == nullptr) {
+    environment->ReleaseStringUTFChars(grant_header_name, header_name);
+    environment->ReleaseStringUTFChars(authorized_sip_uri, uri);
+    return -1;
+  }
+  const int status = triplex_pjsip_make_call(from_handle(handle), uri,
+                                              header_name, header_value);
+  environment->ReleaseStringUTFChars(grant_header_value, header_value);
+  environment->ReleaseStringUTFChars(grant_header_name, header_name);
   environment->ReleaseStringUTFChars(authorized_sip_uri, uri);
   return status;
 }
@@ -181,6 +199,27 @@ Java_dev_triplex_telephony_plivo_NativePjsip_nativeStartProbeTone(
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_dev_triplex_telephony_plivo_NativePjsip_nativeStartSynthesis(
+    JNIEnv *environment, jclass, jlong handle, jshortArray samples) {
+  if (samples == nullptr) {
+    return -1;
+  }
+  const jsize count = environment->GetArrayLength(samples);
+  if (count <= 0) {
+    return -1;
+  }
+  jshort *pcm = environment->GetShortArrayElements(samples, nullptr);
+  if (pcm == nullptr) {
+    return -1;
+  }
+  const int status = triplex_pjsip_start_synthesis(
+      from_handle(handle), reinterpret_cast<const int16_t *>(pcm),
+      static_cast<size_t>(count));
+  environment->ReleaseShortArrayElements(samples, pcm, JNI_ABORT);
+  return status;
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_dev_triplex_telephony_plivo_NativePjsip_nativeDrainEvents(
     JNIEnv *environment, jclass, jlong handle, jobject output_buffer) {
   auto *output = static_cast<uint8_t *>(
@@ -213,6 +252,20 @@ Java_dev_triplex_telephony_plivo_NativePjsip_nativeMetricsSnapshot(
   }
   std::memcpy(output, &metrics, sizeof(metrics));
   return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_triplex_telephony_plivo_NativePjsip_nativeDrainIncomingPcm(
+    JNIEnv *environment, jclass, jlong handle, jobject output_buffer) {
+  auto *output = static_cast<int16_t *>(
+      environment->GetDirectBufferAddress(output_buffer));
+  const jlong capacity = environment->GetDirectBufferCapacity(output_buffer);
+  if (output == nullptr || capacity < static_cast<jlong>(sizeof(int16_t))) {
+    return 0;
+  }
+  return static_cast<jint>(triplex_pjsip_drain_incoming_pcm(
+      from_handle(handle), output,
+      static_cast<size_t>(capacity) / sizeof(int16_t)));
 }
 
 extern "C" JNIEXPORT void JNICALL
