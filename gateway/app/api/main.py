@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal, Optional
 from uuid import UUID, uuid4
 
@@ -16,7 +17,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -50,6 +51,7 @@ from ..services.route_grants import (
 )
 
 logger = logging.getLogger("triplex.gateway")
+PROMPT_DIRECTORY = Path(__file__).resolve().parent.parent / "assets" / "prompts"
 
 engine = create_async_engine(
     settings.database_url,
@@ -194,6 +196,32 @@ class ScreeningSessionResponse(BaseModel):
 @limiter.exempt
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/auth/telemetry-key")
+async def get_telemetry_key(
+    user_id: UUID = Depends(get_current_user_id),
+):
+    """Return API key for telemetry after authentication."""
+    return {"api_key": "Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw="}
+
+
+@app.get("/prompts/{prompt_name}.wav", include_in_schema=False)
+@limiter.exempt
+async def prompt_audio(
+    prompt_name: Literal[
+        "screening-intro",
+        "screening-hold",
+        "screening-decline",
+        "book-zoom",
+        "explain-delay",
+        "automation-complete",
+    ],
+):
+    return FileResponse(
+        PROMPT_DIRECTORY / f"{prompt_name}.wav",
+        media_type="audio/wav",
+    )
 
 
 @app.get("/ready")
@@ -530,6 +558,24 @@ logging.basicConfig(
 )
 logger.setLevel(logging.INFO)
 
+# Initialize telemetry client for Azure Log Analytics
+try:
+    import sys
+    sys.path.insert(0, '/Users/mac/triplex-analytics/python/triplex-telemetry/src')
+    from triplex_telemetry import TelemetryClient, TelemetryConfig, setup_logging
+    
+    telemetry_config = TelemetryConfig(
+        ingest_url="https://func-triplex-ingest-production.azurewebsites.net",
+        api_key="Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw=",
+        source="gateway"
+    )
+    telemetry_client = TelemetryClient.initialize(telemetry_config)
+    setup_logging(telemetry_client, level=logging.INFO)
+    logger.info("Telemetry client initialized successfully")
+except Exception as e:
+    logger.warning(f"Failed to initialize telemetry client: {e}")
+
+
 
 def _normalize_number(raw: str) -> str:
     """E.164 without the plus; Plivo sends bare digits, humans type '+'."""
@@ -782,7 +828,7 @@ async def screening_result(call_uuid: str, request: Request, db: AsyncSession = 
     session.confidence = _form_value(form_data, "SpeechConfidenceScore")[:24] or None
     session.status = "ready"
     await db.commit()
-    xml = RoutingService(db).generate_screening_hold_xml(
+    xml = RoutingService(db).generate_screening_wait_xml(
         call_uuid, str(settings.public_base_url)
     )
     return Response(content=xml, media_type="application/xml")
@@ -796,6 +842,7 @@ async def screening_hold(call_uuid: str, request: Request, db: AsyncSession = De
         raise HTTPException(status_code=404, detail="Screening session not found")
     if session.decision is None:
         session.status = "holding"
+        session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         await db.commit()
     xml = RoutingService(db).generate_screening_hold_xml(
         call_uuid, str(settings.public_base_url)
@@ -821,7 +868,9 @@ async def screening_connect(call_uuid: str, request: Request, db: AsyncSession =
 async def screening_decline(call_uuid: str, request: Request, db: AsyncSession = Depends(get_db)):
     await _verified_screening_form(request)
     return Response(
-        content=RoutingService(db).generate_screening_decline_xml(),
+        content=RoutingService(db).generate_screening_decline_xml(
+            str(settings.public_base_url)
+        ),
         media_type="application/xml",
     )
 

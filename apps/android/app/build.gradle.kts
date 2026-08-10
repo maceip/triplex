@@ -1,5 +1,6 @@
 import java.io.FileInputStream
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
@@ -51,10 +52,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -97,10 +94,31 @@ android {
     }
 }
 
+// Hilt's aggregating task runs its processor through javac, where it reads
+// Kotlin metadata with a shaded kotlin-metadata-jvm capped at format 2.2.0 —
+// and Kotlin 2.3.20 emits 2.3.0, so it hard-fails on our own @Module objects.
+// Turning the task off routes the same processing through KSP, which reads
+// symbols from the compiler instead of from class metadata. Revisit when a Hilt
+// release ships a 2.3-capable metadata library.
+hilt {
+    enableAggregatingTask = false
+}
+
+// Kotlin 2.3 removed the `android.kotlinOptions` bridge; the JVM target now
+// lives on the Kotlin extension.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
 dependencies {
     implementation(project(":telephony-plivo"))
+    implementation(project(":telemetry-client"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation("com.google.ai.edge.litert:litert:2.1.3")
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta3")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -109,6 +127,23 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+
+    // Liquid glass. RikkaUI comes from the ~/RikkaUi checkout via the composite
+    // build wired in settings.gradle.kts; `foundation` is listed explicitly
+    // because `components` depends on it with `implementation`, so its theme
+    // types would otherwise stay off this module's compile classpath.
+    implementation(libs.rikka.ui.components)
+    implementation(libs.rikka.ui.foundation)
+    implementation(libs.backdrop)
+    implementation(libs.swipe)
+    implementation(libs.extendedspans)
+
+    // Icons. One vocabulary (RikkaIcons tokens), one pack chosen at the
+    // composition root (Phosphor), so stroke weight and tint are a single
+    // decision instead of a per-call-site one.
+    implementation(libs.rikka.icons.core)
+    implementation(libs.rikka.icons.tokens.core)
+    implementation(libs.rikka.icons.pack.phosphor)
 
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -129,6 +164,12 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
+
+    // Local-only agent run history (reskin.md §2.4, §5): screened-call
+    // transcripts never leave the device, so there is no sync layer above this.
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     implementation(libs.timber)
     implementation("com.google.protobuf:protobuf-javalite:4.34.1")

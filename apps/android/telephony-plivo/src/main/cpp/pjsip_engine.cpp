@@ -14,14 +14,18 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -258,6 +262,14 @@ struct TriplexPjsipEngine {
 
   std::atomic<uint32_t> tone_generation{0};
   std::thread tone_thread;
+
+  // Incremental synth stream: Kotlin pushes PCM chunks; a pacing thread drains
+  // 10 ms frames into the media synth ring until final or interrupt.
+  std::mutex stream_mu;
+  std::condition_variable stream_cv;
+  std::deque<int16_t> stream_queue;
+  std::atomic<bool> stream_final{false};
+  std::atomic<bool> stream_active{false};
 
   void push_control_event(uint16_t type, uint16_t code, int32_t call_id,
                           int32_t status, int32_t operation, uint32_t value) {
@@ -707,11 +719,11 @@ bool configure_identity(TriplexPjsipEngine *engine,
 
   const int identity_length =
       std::snprintf(engine->identity_uri.data(), engine->identity_uri.size(),
-                    "sip:%s@%s;transport=tls", engine->username.data(),
+                    "sip:%s@%s", engine->username.data(),
                     engine->domain.data());
   const int registrar_length = std::snprintf(
       engine->registrar_uri.data(), engine->registrar_uri.size(),
-      "sips:%s:%u;transport=tls", engine->domain.data(), engine->tls_port);
+      "sip:%s:5060;transport=udp", engine->domain.data());
   return identity_length > 0 &&
          static_cast<size_t>(identity_length) < engine->identity_uri.size() &&
          registrar_length > 0 &&
@@ -729,7 +741,7 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   user_agent_config.max_calls = 1;
   user_agent_config.thread_cnt = 1;
   user_agent_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
-  user_agent_config.srtp_secure_signaling = 1;
+  user_agent_config.srtp_secure_signaling = 0;
   user_agent_config.user_agent =
       pj_str(const_cast<char *>("Triplex-PJSIP/0.1"));
   user_agent_config.cb.on_reg_state2 = &on_registration_state;
@@ -780,12 +792,12 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
       PJ_SSL_SOCK_PROTO_TLS1_2 | PJ_SSL_SOCK_PROTO_TLS1_3;
   transport_config.tls_setting.timeout.sec = 5;
   transport_config.tls_setting.timeout.msec = 0;
-  status = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
+  status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_config,
                                   &engine->tls_transport_ids[0]);
   if (status != PJ_SUCCESS) {
     return status;
   }
-  return pjsua_transport_create(PJSIP_TRANSPORT_TLS6, &transport_config,
+  return pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
                                 &engine->tls_transport_ids[1]);
 }
 
@@ -830,7 +842,10 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
   account_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
-  account_config.srtp_secure_signaling = 1;
+  account_config.srtp_secure_signaling = 0;
+  account_config.allow_contact_rewrite = PJ_TRUE;
+  account_config.contact_use_src_port = PJ_TRUE;
+  account_config.use_rfc5626 = PJ_FALSE;
   account_config.cred_count = 1;
   account_config.cred_info[0].realm = pj_str(engine->realm.data());
   account_config.cred_info[0].scheme = pj_str(const_cast<char *>("digest"));
@@ -1003,6 +1018,13 @@ extern "C" uint32_t triplex_pjsip_interrupt(TriplexPjsipEngine *engine) {
     return 0;
   }
   engine->tone_generation.fetch_add(1, std::memory_order_acq_rel);
+  {
+    std::lock_guard<std::mutex> lock(engine->stream_mu);
+    engine->stream_queue.clear();
+    engine->stream_final.store(true, std::memory_order_release);
+    engine->stream_active.store(false, std::memory_order_release);
+  }
+  engine->stream_cv.notify_all();
   return triplex_media_interrupt(engine->media_runtime);
 }
 
@@ -1098,40 +1120,117 @@ extern "C" int triplex_pjsip_start_synthesis(TriplexPjsipEngine *engine,
       sample_count > kCanonicalClockRate * 60) {
     return PJ_EINVAL;
   }
-  std::vector<int16_t> audio(samples, samples + sample_count);
+  // One-shot synthesis is expressed as begin + single final push.
+  const int began = triplex_pjsip_begin_streaming_synthesis(engine);
+  if (began != PJ_SUCCESS) {
+    return began;
+  }
+  return triplex_pjsip_push_streaming_synthesis(engine, samples, sample_count,
+                                                /*final_chunk=*/1);
+}
+
+extern "C" int triplex_pjsip_begin_streaming_synthesis(
+    TriplexPjsipEngine *engine) {
+  if (engine == nullptr || engine->media_runtime == nullptr) {
+    return PJ_EINVAL;
+  }
   const uint32_t generation =
       engine->tone_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
   if (engine->tone_thread.joinable()) {
     engine->tone_thread.join();
   }
+  {
+    std::lock_guard<std::mutex> lock(engine->stream_mu);
+    engine->stream_queue.clear();
+    engine->stream_final.store(false, std::memory_order_release);
+    engine->stream_active.store(true, std::memory_order_release);
+  }
   const uint32_t epoch = triplex_media_epoch(engine->media_runtime);
-  engine->tone_thread = std::thread(
-      [engine, generation, epoch, audio = std::move(audio)] {
-        std::array<int16_t, TRIPLEX_FRAME_SAMPLES> frame{};
-        const size_t frame_count =
-            (audio.size() + TRIPLEX_FRAME_SAMPLES - 1) / TRIPLEX_FRAME_SAMPLES;
-        auto next_deadline = std::chrono::steady_clock::now();
-        for (size_t frame_index = 0; frame_index < frame_count; ++frame_index) {
-          if (engine->tone_generation.load(std::memory_order_acquire) != generation ||
-              triplex_media_epoch(engine->media_runtime) != epoch) {
-            return;
-          }
-          frame.fill(0);
-          const size_t offset = frame_index * TRIPLEX_FRAME_SAMPLES;
-          const size_t count =
-              std::min<size_t>(TRIPLEX_FRAME_SAMPLES, audio.size() - offset);
-          std::copy_n(audio.data() + offset, count, frame.data());
-          next_deadline += std::chrono::milliseconds(10);
-          const uint16_t flags =
-              frame_index + 1 == frame_count ? TRIPLEX_FLAG_FINAL_CHUNK : 0;
-          if (!triplex_media_synth_push(engine->media_runtime, frame.data(),
-                                        frame.size(), monotonic_raw_ns(), epoch,
-                                        flags, TRIPLEX_STREAM_SYNTH)) {
-            return;
-          }
-          std::this_thread::sleep_until(next_deadline);
+  engine->tone_thread = std::thread([engine, generation, epoch] {
+    std::array<int16_t, TRIPLEX_FRAME_SAMPLES> frame{};
+    auto next_deadline = std::chrono::steady_clock::now();
+    size_t pending = 0;
+    bool saw_final = false;
+    while (true) {
+      if (engine->tone_generation.load(std::memory_order_acquire) != generation ||
+          triplex_media_epoch(engine->media_runtime) != epoch) {
+        break;
+      }
+      {
+        std::unique_lock<std::mutex> lock(engine->stream_mu);
+        engine->stream_cv.wait_for(lock, std::chrono::milliseconds(5), [&] {
+          return !engine->stream_queue.empty() ||
+                 engine->stream_final.load(std::memory_order_acquire) ||
+                 engine->tone_generation.load(std::memory_order_acquire) !=
+                     generation;
+        });
+        while (pending < TRIPLEX_FRAME_SAMPLES && !engine->stream_queue.empty()) {
+          frame[pending++] = engine->stream_queue.front();
+          engine->stream_queue.pop_front();
         }
-      });
+        saw_final = engine->stream_final.load(std::memory_order_acquire);
+      }
+      if (pending == TRIPLEX_FRAME_SAMPLES ||
+          (saw_final && pending > 0 && engine->stream_queue.empty())) {
+        if (pending < TRIPLEX_FRAME_SAMPLES) {
+          std::fill(frame.begin() + static_cast<std::ptrdiff_t>(pending),
+                    frame.end(), 0);
+        }
+        next_deadline += std::chrono::milliseconds(10);
+        const bool last =
+            saw_final && engine->stream_queue.empty() &&
+            pending <= TRIPLEX_FRAME_SAMPLES;
+        // Re-check queue emptiness under lock for the final flag.
+        bool queue_empty = false;
+        {
+          std::lock_guard<std::mutex> lock(engine->stream_mu);
+          queue_empty = engine->stream_queue.empty();
+          saw_final = engine->stream_final.load(std::memory_order_acquire);
+        }
+        const uint16_t flags =
+            (saw_final && queue_empty) ? TRIPLEX_FLAG_FINAL_CHUNK : 0;
+        if (!triplex_media_synth_push(engine->media_runtime, frame.data(),
+                                      frame.size(), monotonic_raw_ns(), epoch,
+                                      flags, TRIPLEX_STREAM_SYNTH)) {
+          break;
+        }
+        pending = 0;
+        std::this_thread::sleep_until(next_deadline);
+        if (flags & TRIPLEX_FLAG_FINAL_CHUNK) {
+          break;
+        }
+        (void)last;
+      } else if (saw_final && pending == 0) {
+        break;
+      }
+    }
+    engine->stream_active.store(false, std::memory_order_release);
+  });
+  return PJ_SUCCESS;
+}
+
+extern "C" int triplex_pjsip_push_streaming_synthesis(
+    TriplexPjsipEngine *engine, const int16_t *samples, size_t sample_count,
+    int final_chunk) {
+  if (engine == nullptr) {
+    return PJ_EINVAL;
+  }
+  if (!engine->stream_active.load(std::memory_order_acquire)) {
+    return PJ_EINVAL;
+  }
+  if (sample_count > 0 && samples == nullptr) {
+    return PJ_EINVAL;
+  }
+  {
+    std::lock_guard<std::mutex> lock(engine->stream_mu);
+    for (size_t i = 0; i < sample_count; ++i) {
+      engine->stream_queue.push_back(samples[i]);
+    }
+    if (final_chunk) {
+      engine->stream_final.store(true, std::memory_order_release);
+    }
+  }
+  engine->stream_cv.notify_one();
   return PJ_SUCCESS;
 }
 

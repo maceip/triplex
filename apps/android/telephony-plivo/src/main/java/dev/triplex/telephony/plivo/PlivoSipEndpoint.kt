@@ -190,6 +190,22 @@ class PlivoSipEndpoint(context: Context) : AutoCloseable {
         NativePjsip.nativeStartSynthesis(it, samples)
     }
 
+    /** Opens a paced streaming synthesis generation. Interrupt cancels it. */
+    fun beginStreamingSynthesis(): CompletableFuture<Int> = submitNative {
+        NativePjsip.nativeBeginStreamingSynthesis(it)
+    }
+
+    /**
+     * Appends 16 kHz mono PCM to the active streaming generation.
+     * Pass [finalChunk]=true on the last push (samples may be empty).
+     */
+    fun pushStreamingSynthesis(
+        samples: ShortArray,
+        finalChunk: Boolean,
+    ): CompletableFuture<Int> = submitNative {
+        NativePjsip.nativePushStreamingSynthesis(it, samples, finalChunk)
+    }
+
     /** Non-RT polling surface. No native callback enters Kotlin. */
     fun pollEvidence(): CompletableFuture<EndpointEvidence> = submitNative { handle ->
         eventBuffer.clear()

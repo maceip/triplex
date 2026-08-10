@@ -41,6 +41,12 @@ internal object NativePjsip {
         amplitude: Int,
     ): Int
     @JvmStatic external fun nativeStartSynthesis(handle: Long, samples: ShortArray): Int
+    @JvmStatic external fun nativeBeginStreamingSynthesis(handle: Long): Int
+    @JvmStatic external fun nativePushStreamingSynthesis(
+        handle: Long,
+        samples: ShortArray,
+        finalChunk: Boolean,
+    ): Int
 
     @JvmStatic external fun nativeDrainEvents(handle: Long, output: ByteBuffer): Int
     @JvmStatic external fun nativeDrainIncomingPcm(handle: Long, output: ByteBuffer): Int

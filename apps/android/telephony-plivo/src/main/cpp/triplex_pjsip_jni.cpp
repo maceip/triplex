@@ -220,6 +220,38 @@ Java_dev_triplex_telephony_plivo_NativePjsip_nativeStartSynthesis(
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_dev_triplex_telephony_plivo_NativePjsip_nativeBeginStreamingSynthesis(
+    JNIEnv *, jclass, jlong handle) {
+  return triplex_pjsip_begin_streaming_synthesis(from_handle(handle));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_triplex_telephony_plivo_NativePjsip_nativePushStreamingSynthesis(
+    JNIEnv *environment, jclass, jlong handle, jshortArray samples,
+    jboolean final_chunk) {
+  const int16_t *pcm = nullptr;
+  jsize count = 0;
+  jshort *owned = nullptr;
+  if (samples != nullptr) {
+    count = environment->GetArrayLength(samples);
+    if (count > 0) {
+      owned = environment->GetShortArrayElements(samples, nullptr);
+      if (owned == nullptr) {
+        return -1;
+      }
+      pcm = reinterpret_cast<const int16_t *>(owned);
+    }
+  }
+  const int status = triplex_pjsip_push_streaming_synthesis(
+      from_handle(handle), pcm, static_cast<size_t>(count),
+      final_chunk == JNI_TRUE ? 1 : 0);
+  if (owned != nullptr) {
+    environment->ReleaseShortArrayElements(samples, owned, JNI_ABORT);
+  }
+  return status;
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_dev_triplex_telephony_plivo_NativePjsip_nativeDrainEvents(
     JNIEnv *environment, jclass, jlong handle, jobject output_buffer) {
   auto *output = static_cast<uint8_t *>(

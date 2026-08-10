@@ -108,6 +108,13 @@ int triplex_pjsip_start_probe_tone(TriplexPjsipEngine *engine,
                                    uint16_t amplitude);
 int triplex_pjsip_start_synthesis(TriplexPjsipEngine *engine,
                                   const int16_t *samples, size_t sample_count);
+/** Start a paced streaming synthesis generation (interrupt cancels it). */
+int triplex_pjsip_begin_streaming_synthesis(TriplexPjsipEngine *engine);
+/** Append 16 kHz mono PCM; set final_chunk nonzero on the last push. */
+int triplex_pjsip_push_streaming_synthesis(TriplexPjsipEngine *engine,
+                                           const int16_t *samples,
+                                           size_t sample_count,
+                                           int final_chunk);
 size_t triplex_pjsip_drain_events(TriplexPjsipEngine *engine,
                                   TriplexSipEvent *events, size_t capacity);
 size_t triplex_pjsip_drain_incoming_pcm(TriplexPjsipEngine *engine,

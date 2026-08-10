@@ -1,52 +1,26 @@
 package dev.triplex.ui.components
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,14 +30,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import zed.rainxch.rikkaicons.core.IconToken
+import zed.rainxch.rikkaui.components.ui.button.Button
+import zed.rainxch.rikkaui.components.ui.button.ButtonAnimation
+import zed.rainxch.rikkaui.components.ui.button.ButtonSize
+import zed.rainxch.rikkaui.components.ui.button.ButtonVariant
+import zed.rainxch.rikkaui.components.ui.button.IconButton
+import zed.rainxch.rikkaui.components.ui.button.IconButtonSize
+import zed.rainxch.rikkaui.components.ui.glass.GlassCard
+import zed.rainxch.rikkaui.components.ui.glass.GlassContainer
+import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
+import zed.rainxch.rikkaui.components.ui.icon.Icon
+import zed.rainxch.rikkaui.components.ui.icon.IconSize
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBar
+import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBarVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 import dev.triplex.ui.theme.TriplexDesign
 import kotlinx.coroutines.delay
 
@@ -83,44 +71,65 @@ enum class TriplexCardTone {
     DANGER
 }
 
-/** App-wide atmospheric surface. It uses only cheap draw operations. */
+/**
+ * App-wide atmospheric surface, and the backdrop every glass component refracts.
+ *
+ * The gradient and the two aura circles are recorded into a layer that
+ * [LocalGlassBackdrop] hands to glass surfaces nested in [content], so a
+ * `GlassCard` or `GlassPanel` dropped anywhere inside a screen samples this
+ * atmosphere without being passed the backdrop by hand. Content is drawn as a
+ * sibling of that layer, never a child of it — a surface that sampled a layer it
+ * belonged to would feed back into itself.
+ *
+ * `TriplexShell` wraps its whole scaffold in one of these, which is why screens
+ * no longer call it themselves: the nav bar and the screen underneath have to
+ * refract the *same* layer, and a per-screen backdrop would leave the chrome
+ * with nothing to sample.
+ *
+ * It still uses only cheap draw operations.
+ */
 @Composable
 fun TriplexBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
     val colors = TriplexDesign.colors
-    val background = MaterialTheme.colorScheme.background
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0f to colors.surfaceRaised,
-                    0.52f to background,
-                    1f to colors.surfaceSunken
-                )
+    val background = RikkaTheme.colors.background
+    GlassContainer(
+        modifier = modifier.fillMaxSize(),
+        background = {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to colors.surfaceRaised,
+                            0.52f to background,
+                            1f to colors.surfaceSunken
+                        )
+                    )
+                    .drawBehind {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(colors.auraPrimary, Color.Transparent),
+                                center = Offset(size.width * 0.92f, size.height * 0.06f),
+                                radius = size.width * 0.7f
+                            ),
+                            radius = size.width * 0.7f,
+                            center = Offset(size.width * 0.92f, size.height * 0.06f)
+                        )
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(colors.auraSecondary, Color.Transparent),
+                                center = Offset(size.width * 0.08f, size.height * 0.78f),
+                                radius = size.width * 0.62f
+                            ),
+                            radius = size.width * 0.62f,
+                            center = Offset(size.width * 0.08f, size.height * 0.78f)
+                        )
+                    }
             )
-            .drawBehind {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(colors.auraPrimary, Color.Transparent),
-                        center = Offset(size.width * 0.92f, size.height * 0.06f),
-                        radius = size.width * 0.7f
-                    ),
-                    radius = size.width * 0.7f,
-                    center = Offset(size.width * 0.92f, size.height * 0.06f)
-                )
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(colors.auraSecondary, Color.Transparent),
-                        center = Offset(size.width * 0.08f, size.height * 0.78f),
-                        radius = size.width * 0.62f
-                    ),
-                    radius = size.width * 0.62f,
-                    center = Offset(size.width * 0.08f, size.height * 0.78f)
-                )
-            }
+        }
     ) {
         content()
     }
@@ -165,30 +174,22 @@ fun TriplexScreenHeader(
     ) {
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.small)
+            verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.xs)
         ) {
             eyebrow?.let {
                 Text(
                     text = it.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.primary
                 )
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            Text(text = title, variant = TextVariant.H2)
             description?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(text = it, variant = TextVariant.Muted)
             }
         }
         trailing?.let {
-            Spacer(Modifier.width(TriplexDesign.spacing.medium))
+            Spacer(Modifier.width(RikkaTheme.spacing.md))
             it()
         }
     }
@@ -202,199 +203,126 @@ fun TriplexButton(
     style: TriplexButtonStyle = TriplexButtonStyle.PRIMARY,
     enabled: Boolean = true,
     loading: Boolean = false,
-    leadingIcon: ImageVector? = null
+    leadingIcon: IconToken? = null
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) TriplexDesign.motion.pressedScale else 1f,
-        animationSpec = spring(stiffness = 720f, dampingRatio = 0.78f),
-        label = "Triplex button press"
+    Button(
+        text = text,
+        onClick = onClick,
+        // Rikka's Lg size is 44dp; Triplex buttons have always been 54dp and the
+        // screens are laid out around that, so the floor is kept explicitly.
+        modifier = modifier.defaultMinSize(minHeight = 54.dp),
+        variant = style.toButtonVariant(),
+        size = ButtonSize.Lg,
+        animation = ButtonAnimation.Scale,
+        enabled = enabled,
+        loading = loading,
+        leadingIcon = leadingIcon?.let { icon ->
+            { Icon(imageVector = icon, contentDescription = null, size = IconSize.Sm) }
+        }
     )
-    val shapedModifier = modifier
-        .scale(scale)
-        .defaultMinSize(minHeight = 54.dp)
-    val content: @Composable RowScope.() -> Unit = {
-        TriplexButtonContent(text = text, loading = loading, leadingIcon = leadingIcon)
-    }
-    val canClick = enabled && !loading
-
-    when (style) {
-        TriplexButtonStyle.PRIMARY -> Button(
-            onClick = onClick,
-            modifier = shapedModifier,
-            enabled = canClick,
-            interactionSource = interactionSource,
-            shape = MaterialTheme.shapes.medium,
-            contentPadding = ButtonDefaults.ContentPadding,
-            content = content
-        )
-        TriplexButtonStyle.SECONDARY -> Button(
-            onClick = onClick,
-            modifier = shapedModifier,
-            enabled = canClick,
-            interactionSource = interactionSource,
-            shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            ),
-            content = content
-        )
-        TriplexButtonStyle.OUTLINE -> OutlinedButton(
-            onClick = onClick,
-            modifier = shapedModifier,
-            enabled = canClick,
-            interactionSource = interactionSource,
-            shape = MaterialTheme.shapes.medium,
-            border = BorderStroke(1.dp, TriplexDesign.colors.glassBorder),
-            content = content
-        )
-        TriplexButtonStyle.GHOST -> TextButton(
-            onClick = onClick,
-            modifier = shapedModifier,
-            enabled = canClick,
-            interactionSource = interactionSource,
-            shape = MaterialTheme.shapes.medium,
-            content = content
-        )
-        TriplexButtonStyle.DANGER -> Button(
-            onClick = onClick,
-            modifier = shapedModifier,
-            enabled = canClick,
-            interactionSource = interactionSource,
-            shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError
-            ),
-            content = content
-        )
-    }
 }
 
-@Composable
-private fun RowScope.TriplexButtonContent(
-    text: String,
-    loading: Boolean,
-    leadingIcon: ImageVector?
-) {
-    val motion = TriplexDesign.motion
-    AnimatedContent(
-        targetState = loading,
-        transitionSpec = {
-            fadeIn(tween(motion.quickMillis)) togetherWith
-                fadeOut(tween(motion.instantMillis))
-        },
-        label = "Triplex button state"
-    ) { busy ->
-        if (busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-                color = androidx.compose.material3.LocalContentColor.current
-            )
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                leadingIcon?.let {
-                    Icon(it, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(TriplexDesign.spacing.small))
-                }
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
+/**
+ * Maps the Triplex button vocabulary onto Rikka's.
+ *
+ * `internal` rather than `private` so `TriplexButtonStyleTest` can pin the
+ * mapping: DANGER landing anywhere but [ButtonVariant.Destructive] would make a
+ * destructive action look ordinary, and that is not something a compiler catches.
+ */
+internal fun TriplexButtonStyle.toButtonVariant(): ButtonVariant = when (this) {
+    TriplexButtonStyle.PRIMARY -> ButtonVariant.Default
+    TriplexButtonStyle.SECONDARY -> ButtonVariant.Secondary
+    TriplexButtonStyle.OUTLINE -> ButtonVariant.Outline
+    TriplexButtonStyle.GHOST -> ButtonVariant.Ghost
+    TriplexButtonStyle.DANGER -> ButtonVariant.Destructive
 }
 
 @Composable
 fun TriplexIconButton(
-    imageVector: ImageVector,
+    imageVector: IconToken,
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) TriplexDesign.motion.pressedScale else 1f,
-        animationSpec = spring(stiffness = 760f, dampingRatio = 0.78f),
-        label = "Triplex icon press"
+    // Deliberately the opaque design-system IconButton rather than
+    // GlassIconButton: this is the trailing action of a directory/history row,
+    // so it can appear dozens of times in one scrolling list and a blur layer
+    // per row is a cost nobody has profiled. Floating chrome uses glass; row
+    // furniture does not.
+    IconButton(
+        icon = imageVector,
+        contentDescription = contentDescription,
+        onClick = onClick,
+        modifier = modifier,
+        variant = ButtonVariant.Secondary,
+        size = IconButtonSize.Default,
+        animation = ButtonAnimation.Scale,
+        enabled = enabled
     )
-    Surface(
-        modifier = modifier.scale(scale),
-        shape = CircleShape,
-        color = TriplexDesign.colors.surfaceRaised.copy(alpha = 0.82f),
-        border = BorderStroke(1.dp, TriplexDesign.colors.glassBorder)
-    ) {
-        IconButton(
-            onClick = onClick,
-            enabled = enabled,
-            interactionSource = interactionSource
-        ) {
-            Icon(imageVector, contentDescription = contentDescription)
-        }
-    }
 }
 
+/**
+ * The standard content container.
+ *
+ * A glass card, per the implementation plan — the tone is applied as the wash
+ * over the blurred backdrop rather than as an opaque fill, so a warning card
+ * reads as amber-tinted glass and not as a Material container.
+ *
+ * Content padding is zero because every existing call site pads its own content;
+ * `GlassCard` would otherwise add `spacing.lg` on top of that.
+ *
+ * @param hostsGlass set this when the card contains glass of its own — dial keys,
+ *   glass chips. The card then records what it drew, so the nested glass refracts
+ *   *the card* instead of the scene far behind it, which is the difference
+ *   between keys that look like glass beads and keys that look like flat discs.
+ */
 @Composable
 fun TriplexCard(
     modifier: Modifier = Modifier,
     tone: TriplexCardTone = TriplexCardTone.DEFAULT,
     onClick: (() -> Unit)? = null,
+    hostsGlass: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && onClick != null) 0.987f else 1f,
-        animationSpec = spring(stiffness = 700f, dampingRatio = 0.8f),
-        label = "Triplex card press"
-    )
-    val container = when (tone) {
-        TriplexCardTone.DEFAULT -> TriplexDesign.colors.surfaceRaised
-        TriplexCardTone.ACCENT -> MaterialTheme.colorScheme.primaryContainer
-        TriplexCardTone.SUCCESS -> TriplexDesign.colors.successContainer
-        TriplexCardTone.WARNING -> MaterialTheme.colorScheme.tertiaryContainer
-        TriplexCardTone.DANGER -> MaterialTheme.colorScheme.errorContainer
-    }
-    val contentColor = when (tone) {
-        TriplexCardTone.DEFAULT -> MaterialTheme.colorScheme.onSurface
-        TriplexCardTone.ACCENT -> MaterialTheme.colorScheme.onPrimaryContainer
-        TriplexCardTone.SUCCESS -> TriplexDesign.colors.onSuccessContainer
-        TriplexCardTone.WARNING -> MaterialTheme.colorScheme.onTertiaryContainer
-        TriplexCardTone.DANGER -> MaterialTheme.colorScheme.onErrorContainer
-    }
-    val clickableModifier = if (onClick == null) {
-        Modifier
-    } else {
-        Modifier.clickable(
-            interactionSource = interactionSource,
-            indication = LocalIndication.current,
-            role = Role.Button,
-            onClick = onClick
-        )
-    }
-
-    Surface(
-        modifier = modifier
-            .scale(scale)
-            .then(clickableModifier),
-        shape = MaterialTheme.shapes.large,
-        color = container,
-        contentColor = contentColor,
-        border = BorderStroke(1.dp, TriplexDesign.colors.glassBorder.copy(alpha = 0.8f)),
-        shadowElevation = TriplexDesign.elevation.resting
+    GlassCard(
+        modifier = modifier,
+        level = GlassLevel.Regular,
+        onClick = onClick,
+        tint = tone.glassTint(),
+        contentColor = RikkaTheme.colors.onSurface,
+        contentPadding = PaddingValues(0.dp),
+        hostsGlass = hostsGlass
     ) {
         content()
     }
 }
 
+/**
+ * The wash a [TriplexCardTone] puts over the backdrop.
+ *
+ * Content stays `onSurface` for every tone: the tint is applied as a wash over
+ * the blurred backdrop, so it colours the surface without ever becoming a
+ * container that needs its own contrasting foreground.
+ */
+@Composable
+private fun TriplexCardTone.glassTint(): Color = when (this) {
+    TriplexCardTone.DEFAULT -> RikkaTheme.glass.tint
+    TriplexCardTone.ACCENT -> RikkaTheme.colors.primary
+    TriplexCardTone.SUCCESS -> RikkaTheme.colors.success
+    TriplexCardTone.WARNING -> RikkaTheme.colors.warning
+    TriplexCardTone.DANGER -> RikkaTheme.colors.destructive
+}
+
+/**
+ * A compact status label.
+ *
+ * Not built on the design-system `Badge`: that models four variants
+ * (default/secondary/outline/destructive) and Triplex statuses need five, with
+ * distinct success and warning readings. Rather than collapse two of them onto
+ * a wrong colour, the pill is assembled here from palette tokens — a tinted
+ * fill at 16%, a hairline at 40%, and the tone itself as the text colour.
+ */
 @Composable
 fun TriplexStatusPill(
     text: String,
@@ -402,67 +330,59 @@ fun TriplexStatusPill(
     tone: TriplexCardTone = TriplexCardTone.DEFAULT,
     leadingColor: Color? = null
 ) {
-    val container = when (tone) {
-        TriplexCardTone.DEFAULT -> MaterialTheme.colorScheme.surfaceVariant
-        TriplexCardTone.ACCENT -> MaterialTheme.colorScheme.primaryContainer
-        TriplexCardTone.SUCCESS -> TriplexDesign.colors.successContainer
-        TriplexCardTone.WARNING -> MaterialTheme.colorScheme.tertiaryContainer
-        TriplexCardTone.DANGER -> MaterialTheme.colorScheme.errorContainer
+    val accent = when (tone) {
+        TriplexCardTone.DEFAULT -> RikkaTheme.colors.onMuted
+        TriplexCardTone.ACCENT -> RikkaTheme.colors.primary
+        TriplexCardTone.SUCCESS -> RikkaTheme.colors.success
+        TriplexCardTone.WARNING -> RikkaTheme.colors.warning
+        TriplexCardTone.DANGER -> RikkaTheme.colors.destructive
     }
-    val contentColor = when (tone) {
-        TriplexCardTone.DEFAULT -> MaterialTheme.colorScheme.onSurfaceVariant
-        TriplexCardTone.ACCENT -> MaterialTheme.colorScheme.onPrimaryContainer
-        TriplexCardTone.SUCCESS -> TriplexDesign.colors.onSuccessContainer
-        TriplexCardTone.WARNING -> MaterialTheme.colorScheme.onTertiaryContainer
-        TriplexCardTone.DANGER -> MaterialTheme.colorScheme.onErrorContainer
-    }
-    Surface(
-        modifier = modifier,
-        shape = CircleShape,
-        color = container,
-        contentColor = contentColor
+    Row(
+        modifier = modifier
+            .background(accent.copy(alpha = 0.16f), CircleShape)
+            .border(1.dp, accent.copy(alpha = 0.40f), CircleShape)
+            .padding(horizontal = RikkaTheme.spacing.md, vertical = RikkaTheme.spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.xs),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            leadingColor?.let {
-                Box(Modifier.size(7.dp).background(it, CircleShape))
-            }
-            Text(text = text, style = MaterialTheme.typography.labelMedium)
+        leadingColor?.let {
+            Box(Modifier.size(7.dp).background(it, CircleShape))
         }
+        Text(
+            text = text,
+            variant = TextVariant.Small,
+            color = accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TriplexTopBar(
     title: String,
     modifier: Modifier = Modifier,
-    navigationIcon: ImageVector? = null,
+    navigationIcon: IconToken? = null,
     navigationContentDescription: String = "Back",
     onNavigationClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     TopAppBar(
+        title = title,
         modifier = modifier,
-        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
         navigationIcon = {
             if (navigationIcon != null && onNavigationClick != null) {
                 TriplexIconButton(
                     imageVector = navigationIcon,
                     contentDescription = navigationContentDescription,
-                    onClick = onNavigationClick,
-                    modifier = Modifier.padding(start = 8.dp)
+                    onClick = onNavigationClick
                 )
             }
         },
         actions = actions,
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.Transparent,
-            scrolledContainerColor = TriplexDesign.colors.surfaceRaised.copy(alpha = 0.96f)
-        )
+        // The shell's TriplexBackground is the point; an opaque bar would cut a
+        // band out of it.
+        variant = TopAppBarVariant.Transparent
     )
 }
 
@@ -472,54 +392,12 @@ fun TriplexTopBarAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) TriplexDesign.motion.pressedScale else 1f,
-        animationSpec = spring(stiffness = 760f, dampingRatio = 0.78f),
-        label = "Triplex top bar action"
-    )
-    TextButton(
+    Button(
+        text = text,
         onClick = onClick,
-        modifier = modifier.scale(scale),
-        interactionSource = interactionSource,
-        shape = MaterialTheme.shapes.medium
-    ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
-    }
-}
-
-@Composable
-fun TriplexSignalOrb(
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    val transition = rememberInfiniteTransition(label = "Triplex signal")
-    val pulse by transition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = if (active) 1.04f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (active) 1_450 else 2_400),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "Signal pulse"
+        modifier = modifier,
+        variant = ButtonVariant.Ghost,
+        size = ButtonSize.Sm,
+        animation = ButtonAnimation.Scale
     )
-    Box(
-        modifier = modifier
-            .scale(pulse)
-            .background(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f),
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                    )
-                ),
-                shape = CircleShape
-            )
-            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        content()
-    }
 }

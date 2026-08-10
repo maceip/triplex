@@ -1,12 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        The platform theme only has to cover the moment before Compose draws.
+        Colours, typography and shape all come from LiquidGlassTheme, so the
+        colorPrimary/colorAccent attributes that used to sit here influenced
+        nothing that shipped and are gone.
+
+        The window is transparent behind the system bars because DialerActivity
+        calls enableEdgeToEdge(); the shell scaffold is what keeps content clear
+        of them.
+    -->
     <style name="Theme.Triplex" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:colorPrimary">@color/primary</item>
-        <item name="android:colorPrimaryDark">@color/primaryDark</item>
-        <item name="android:colorAccent">@color/secondary</item>
-        <item name="android:statusBarColor">@color/background</item>
-        <item name="android:navigationBarColor">@color/primaryDark</item>
-        <item name="android:colorBackground">@color/background</item>
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

@@ -24,21 +24,12 @@
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.Triplex"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
-
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.Triplex">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
 
         <activity
             android:name=".dialer.DialerActivity"
@@ -63,14 +54,24 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".dialer.AgentScreeningActivity"
-            android:exported="false"
-            android:label="Triplex call screening"
-            android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:theme="@style/Theme.Triplex" />
+        <!--
+            The retired agent-side entry point. The MainActivity class itself is
+            gone; this alias is all that remains, so launcher shortcuts and pinned
+            icons that stored dev.triplex/.MainActivity still resolve while
+            DialerActivity owns the one and only LAUNCHER icon (reskin.md §2.1).
+            An activity-alias needs no class of its own — android:name is just the
+            component name it answers to. The alias deliberately carries no
+            LAUNCHER category — that is what removed the second icon.
+        -->
+        <activity-alias
+            android:name=".MainActivity"
+            android:targetActivity=".dialer.DialerActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".dialer.TriplexInCallService"
@@ -106,7 +107,7 @@
         </service>
 
         <receiver
-            android:name=".dialer.CallNotificationActionReceiver"
+            android:name=".dialer.CallActionReceiver"
             android:exported="false" />
 
     </application>

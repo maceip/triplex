@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -35,10 +37,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     sourceSets {
         getByName("main") {
             // src/main/kotlin holds the host-side TransportValidationRunner
@@ -46,6 +44,14 @@ android {
             java.setSrcDirs(listOf("src/main/java"))
             kotlin.setSrcDirs(listOf("src/main/java"))
         }
+    }
+}
+
+// Kotlin 2.3 removed the `android.kotlinOptions` bridge; the JVM target now
+// lives on the Kotlin extension.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

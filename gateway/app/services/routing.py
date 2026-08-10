@@ -98,21 +98,32 @@ class RoutingService:
         result_url = escape(f"{base}/screening/{call_uuid}/result", quote=True)
         interim_url = escape(f"{base}/screening/{call_uuid}/interim", quote=True)
         hold_url = escape(f"{base}/screening/{call_uuid}/hold")
+        prompt_url = escape(f"{base}/prompts/screening-intro.wav")
         return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <GetInput action="{result_url}" method="POST" inputType="speech" language="en-US" speechModel="phone_call" executionTimeout="20" speechEndTimeout="2" interimSpeechResultsCallback="{interim_url}" interimSpeechResultsCallbackMethod="POST">
-        <Speak language="en-US" voice="Polly.Joanna">Hi. This is the Triplex screening assistant. Please say your name and why you are calling.</Speak>
+        <Play>{prompt_url}</Play>
     </GetInput>
     <Redirect method="POST">{hold_url}</Redirect>
 </Response>'''
 
     def generate_screening_hold_xml(self, call_uuid: str, public_base_url: str) -> str:
+        base = public_base_url.rstrip("/")
+        hold_url = escape(f"{base}/screening/{call_uuid}/hold")
+        prompt_url = escape(f"{base}/prompts/screening-hold.wav")
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>{prompt_url}</Play>
+    <Wait length="20"/>
+    <Redirect method="POST">{hold_url}</Redirect>
+</Response>'''
+
+    def generate_screening_wait_xml(self, call_uuid: str, public_base_url: str) -> str:
         hold_url = escape(
             f"{public_base_url.rstrip('/')}/screening/{call_uuid}/hold"
         )
         return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Speak language="en-US" voice="Polly.Joanna">Thank you. Please hold while I check whether they are available.</Speak>
     <Wait length="20"/>
     <Redirect method="POST">{hold_url}</Redirect>
 </Response>'''
@@ -122,10 +133,13 @@ class RoutingService:
     ) -> str:
         return self._generate_dial_xml(sip_endpoint, caller_id)
 
-    def generate_screening_decline_xml(self) -> str:
-        return '''<?xml version="1.0" encoding="UTF-8"?>
+    def generate_screening_decline_xml(self, public_base_url: str) -> str:
+        prompt_url = escape(
+            f"{public_base_url.rstrip('/')}/prompts/screening-decline.wav"
+        )
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Speak language="en-US" voice="Polly.Joanna">They are not available to take this call. Goodbye.</Speak>
+    <Play>{prompt_url}</Play>
     <Hangup/>
 </Response>'''
 
@@ -145,24 +159,21 @@ class RoutingService:
             f"{public_base_url.rstrip('/')}/screening/{call_uuid}/message-interim",
             quote=True,
         )
-        prompt = {
-            "book_zoom": (
-                "I can help arrange a Zoom call. Please tell me a day and time, "
-                "your time zone, and the best email address for the invitation."
-            ),
-            "explain_delay": (
-                "They are running late and asked me to let you know. "
-                "Is there anything you would like me to pass along?"
-            ),
+        prompt_asset = {
+            "book_zoom": "book-zoom",
+            "explain_delay": "explain-delay",
         }.get(automation_id)
-        if prompt is None:
+        if prompt_asset is None:
             raise ValueError("Unsupported screening automation")
+        base = public_base_url.rstrip("/")
+        prompt_url = escape(f"{base}/prompts/{prompt_asset}.wav")
+        complete_url = escape(f"{base}/prompts/automation-complete.wav")
         return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <GetInput action="{message_url}" method="POST" inputType="speech" language="en-US" speechModel="phone_call" executionTimeout="30" speechEndTimeout="3" interimSpeechResultsCallback="{interim_url}" interimSpeechResultsCallbackMethod="POST">
-        <Speak language="en-US" voice="Polly.Joanna">{escape(prompt)}</Speak>
+        <Play>{prompt_url}</Play>
     </GetInput>
-    <Speak language="en-US" voice="Polly.Joanna">Thank you. I have the meeting details and will send them for confirmation. Goodbye.</Speak>
+    <Play>{complete_url}</Play>
     <Hangup/>
 </Response>'''
 

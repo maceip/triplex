@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#4CAF50</color>
-    <color name="primaryDark">#388E3C</color>
-    <color name="secondary">#81C784</color>
-    <color name="background">#FAFAFA</color>
-    <color name="surface">#FFFFFF</color>
-    <color name="error">#BA1A1A</color>
-    <color name="on_primary">#FFFFFF</color>
-    <color name="on_secondary">#FFFFFF</color>
-    <color name="on_background">#1A1C1E</color>
-    <color name="on_surface">#1A1C1E</color>
-    <color name="on_error">#FFFFFF</color>
+    <!--
+        Only the two colours the platform itself needs.
+
+        Everything a screen draws comes from the Compose theme
+        (RikkaTheme + LiquidGlassColors), so the old Material-green palette that
+        used to live here had no consumer and no relation to what shipped.
+
+        launcher_background  - adaptive-icon background (res/mipmap-hdpi/ic_launcher.xml).
+        window_background    - what the window manager paints before the first
+                               frame composes; kept in step with the Compose
+                               background so launch does not flash.
+    -->
+    <color name="launcher_background">#6558E8</color>
+    <color name="window_background">#F8F8FE</color>
 </resources>

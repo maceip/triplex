@@ -2,12 +2,20 @@ package dev.triplex.telephony.sip
 
 import android.content.Context
 import android.os.SystemClock
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.triplex.data.local.AgentCallPolicy
+import dev.triplex.data.local.AgentConfigRepository
 import dev.triplex.data.local.SecureStorage
+import dev.triplex.data.repository.Result
+import dev.triplex.domain.model.AutomationVoicePolicy
 import dev.triplex.domain.model.TaskDefinition
 import dev.triplex.nativebridge.audio.AudioPipeline
 import dev.triplex.nativebridge.runtime.NativeRuntime
+import dev.triplex.speech.reasoner.AiCoreCallReasoner
 import dev.triplex.speech.soda.SodaCallTranscriber
-import dev.triplex.speech.tts.InflectLiteRtCallVoice
+import dev.triplex.speech.tts.CallVoice
+import dev.triplex.speech.tts.InflectCallVoice
+import dev.triplex.speech.tts.Qwen3CallVoice
 import dev.triplex.telephony.plivo.AuthorizedSipRoute
 import dev.triplex.telephony.plivo.PlivoSipEndpoint
 import dev.triplex.telephony.plivo.SipEvent
@@ -35,6 +43,7 @@ import java.security.KeyStore
 import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -48,9 +57,19 @@ import javax.inject.Singleton
  */
 @Singleton
 class TelephonyController @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val secureStorage: SecureStorage,
-    private val runtime: NativeRuntime
+    private val runtime: NativeRuntime,
+    /**
+     * Agent behavior the user configured (reskin.md §2.3, seams 3–4).
+     *
+     * The decisions themselves live in [AgentCallPolicy] so they can be tested
+     * without PJSIP; this class only reads the config and obeys.
+     */
+    private val agentConfig: AgentConfigRepository,
+    private val brandedVoice: InflectCallVoice,
+    private val clonedVoice: Qwen3CallVoice,
+    private val reasoner: AiCoreCallReasoner,
 ) {
     enum class SipState {
         UNCONFIGURED,
@@ -76,7 +95,7 @@ class TelephonyController @Inject constructor(
     private var outboundDestination: String? = null
     private var outboundTask: TaskDefinition? = null
     private val callTranscriber = SodaCallTranscriber(context)
-    private val callVoice = InflectLiteRtCallVoice(context)
+    private val activeCallVoice = AtomicReference<CallVoice>(brandedVoice)
     private val incomingPcm = ByteBuffer.allocateDirect(16_000 * 2).order(ByteOrder.nativeOrder())
     private var greetingCallId = -1
     private var callerTranscriptBaseline = ""
@@ -251,7 +270,14 @@ class TelephonyController @Inject constructor(
                 _callState.value = CallStateInfo.Ringing(callerId = "call-${event.callId}")
                 Timber.i("Incoming call %d", event.callId)
                 scope.launch {
-                    if (callTranscriber.startCall() && activeCallId == event.callId) {
+                    // "Agent answers all calls" is a setting now. With it off the
+                    // call keeps ringing for the user to take; the agent does not
+                    // quietly pick up (reskin.md §2.3, seam 3).
+                    if (!AgentCallPolicy.shouldAutoAnswer(agentConfig.inboundConfig())) {
+                        Timber.i("Auto-answer disabled; leaving call %d ringing", event.callId)
+                        return@launch
+                    }
+                    if (ensureAsrStarted() && activeCallId == event.callId) {
                         answer()
                     }
                 }
@@ -260,6 +286,7 @@ class TelephonyController @Inject constructor(
                 if (event.status == MEDIA_ACTIVE_STATUS && activeCallId >= 0) {
                     currentEpoch = runtime.getEpoch()
                     audioPipeline?.start(currentEpoch)
+                    ensureAsrStarted()
                     _callState.value = CallStateInfo.Active(
                         destination = outboundDestination ?: "call-$activeCallId",
                         epoch = currentEpoch,
@@ -319,7 +346,8 @@ class TelephonyController @Inject constructor(
         greetingCallId = callId
         scope.launch {
             val task = outboundTask
-            val opening = task?.let(::outboundOpening) ?: SCREENING_GREETING
+            val opening = task?.let(::outboundOpening)
+                ?: AgentCallPolicy.greeting(agentConfig.inboundConfig())
             runCatching { speakAgent(callId, opening) }.onFailure {
                 Timber.e(it, "Screening greeting synthesis failed")
             }
@@ -329,57 +357,152 @@ class TelephonyController @Inject constructor(
         }
     }
 
+    /**
+     * Hands the live call to [automationId] (reskin.md §2.3, seam 4).
+     *
+     * The scripts come from [dev.triplex.domain.model.AutomationCatalog] via
+     * [AgentCallPolicy.automationFor], which also honors the automations the user
+     * switched off on the inbound setup screen.
+     *
+     * @return true once the attempt is launched. Whether the automation is
+     *   enabled can only be answered by a suspending config read, so — unlike
+     *   the previous hard-coded `when` — an unknown or disabled id is refused
+     *   inside the coroutine and logged, not reported through this return value.
+     *   A live call is still required, and that is still refused synchronously.
+     */
     fun startAutomation(automationId: String): Boolean {
         val callId = activeCallId
         if (callId < 0) return false
-        val opening = when (automationId) {
-            "book_zoom" ->
-                "I can help arrange a Zoom meeting. Please tell me the day, time, time zone, and email address you want to use."
-            "explain_delay" ->
-                "I can take a message about the delay. Please tell me who the update is for and anything else that should be passed along."
-            else -> return false
-        }
         automationJob?.cancel()
         automationJob = scope.launch {
-            if (!speakAgent(callId, opening)) return@launch
-            val reply = awaitCallerReply(callerTranscriptBaseline) ?: return@launch
-            val response = when (automationId) {
-                "book_zoom" ->
-                    "Thank you. I recorded your proposed meeting details: ${spokenSummary(reply)}. The account owner will confirm availability before an invitation is sent."
-                else ->
-                    "Thank you. I recorded this update: ${spokenSummary(reply)}. I will pass it along."
+            val template = AgentCallPolicy.automationFor(automationId, agentConfig.inboundConfig())
+            if (template == null) {
+                Timber.w("Automation %s is unknown or disabled; ignoring", automationId)
+                return@launch
             }
-            speakAgent(callId, response)
+            if (!speakAgent(callId, template.opening)) return@launch
+            val reply = awaitCallerReply(callerTranscriptBaseline) ?: return@launch
+            speakAgent(callId, template.acknowledgement(spokenSummary(reply)))
         }
         return true
     }
 
+    /**
+     * Speaks [text] on the live call as a reply the user picked.
+     *
+     * A thin public wrapper over the agent synthesis path: the audio really is
+     * the agent's voice, so [ConversationSpeaker] keeps its two values and the
+     * "this came from the user" attribution is made one layer up, in
+     * `SipCallSource`, where the timeline is built.
+     */
+    fun speakUserReply(text: String) {
+        val callId = activeCallId
+        if (callId < 0) return
+        scope.launch {
+            runCatching { speakAgent(callId, text) }
+                .onFailure { Timber.e(it, "User reply synthesis failed") }
+        }
+    }
+
+    private fun ensureAsrStarted(): Boolean {
+        return callTranscriber.startCall().also { ok ->
+            if (!ok) Timber.e("SODA failed to start for live call ASR")
+        }
+    }
+
+    private suspend fun resolveCallVoice(): CallVoice {
+        val policyResult = if (outboundTask != null) {
+            agentConfig.resolveOutboundVoicePolicy()
+        } else {
+            agentConfig.resolveInboundVoicePolicy()
+        }
+        val policy = when (policyResult) {
+            is Result.Success -> policyResult.data
+            is Result.Error -> {
+                Timber.e("Voice policy resolve failed: %s", policyResult.message)
+                throw IllegalStateException(policyResult.message)
+            }
+        }
+        val voice = when (policy) {
+            AutomationVoicePolicy.CLONED -> clonedVoice
+            AutomationVoicePolicy.PRESET -> brandedVoice
+        }
+        activeCallVoice.set(voice)
+        return voice
+    }
+
     private suspend fun runOutboundDialogue(callId: Int) {
         val firstReply = awaitCallerReply(callerTranscriptBaseline) ?: return
-        if (!speakAgent(
-                callId,
-                "Thank you. I heard: ${spokenSummary(firstReply)}. Please give me the return authorization number and the next step."
-            )
-        ) return
+        val history = _conversationTurns.value.map {
+            (if (it.speaker == ConversationSpeaker.CALLER) "Caller" else "Agent") to it.text
+        }
+        val instructions = outboundTask?.let { task ->
+            "You are placing an outbound call about ${task.task_params["product"].orEmpty()}. " +
+                "Desired outcome: ${task.task_params["desired_outcome"].orEmpty()}."
+        } ?: "You are the user's phone agent on a live call."
+        val reply = runCatching {
+            reasoner.reply(instructions, firstReply, history)
+        }.getOrElse {
+            Timber.e(it, "Nano reply failed; failing closed")
+            return
+        }
+        if (!speakAgent(callId, reply)) return
         val secondReply = awaitCallerReply(callerTranscriptBaseline) ?: return
-        speakAgent(
-            callId,
-            "Got it. I recorded: ${spokenSummary(secondReply)}. Thank you for your help."
-        )
+        val closing = runCatching {
+            reasoner.reply(
+                instructions + " Wrap up politely after collecting what you need.",
+                secondReply,
+                history + ("Caller" to firstReply) + ("Agent" to reply),
+            )
+        }.getOrElse {
+            Timber.e(it, "Nano closing reply failed")
+            return
+        }
+        speakAgent(callId, closing)
     }
 
     private suspend fun speakAgent(callId: Int, text: String): Boolean {
         if (activeCallId != callId) return false
-        val pcm = callVoice.synthesize(text)
-        check(pcm.isNotEmpty()) { "Inflect returned no audio" }
-        if (activeCallId != callId) return false
+        val sip = endpoint ?: return false
+        val voice = runCatching { resolveCallVoice() }.getOrElse {
+            Timber.e(it, "Cannot resolve call voice")
+            return false
+        }
         callerTranscriptBaseline = callTranscriber.transcript.value
-        val status = endpoint?.startSynthesis(pcm)?.get() ?: -1
-        check(status == 0) { "SIP synthesis enqueue failed with $status" }
         _agentUtterance.value = text
-        appendTurn(ConversationSpeaker.TRIPLEX, text)
+        appendTurn(ConversationSpeaker.TRIPLEX, text, 0L)
         agentPlaybackActive.set(true)
-        delay((pcm.size * 1_000L / 16_000L).coerceAtLeast(1L))
+
+        val begin = sip.beginStreamingSynthesis().get()
+        if (begin != 0) {
+            agentPlaybackActive.set(false)
+            check(false) { "SIP begin streaming failed with $begin" }
+        }
+        var totalSamples = 0
+        try {
+            voice.synthesizeStream(text).collect { chunk ->
+                if (activeCallId != callId || !agentPlaybackActive.get()) {
+                    voice.cancel()
+                    return@collect
+                }
+                totalSamples += chunk.size
+                val status = sip.pushStreamingSynthesis(chunk, finalChunk = false).get()
+                check(status == 0) { "SIP push streaming failed with $status" }
+            }
+            sip.pushStreamingSynthesis(ShortArray(0), finalChunk = true).get()
+        } catch (t: Throwable) {
+            voice.cancel()
+            runCatching { sip.interrupt().get() }
+            agentPlaybackActive.set(false)
+            throw t
+        }
+
+        val playbackDurationMs = (totalSamples * 1_000L / SYNTHESIS_SAMPLE_RATE).coerceAtLeast(1L)
+        // Wait for paced playback unless barge-in already cleared the flag.
+        val deadline = SystemClock.elapsedRealtime() + playbackDurationMs
+        while (agentPlaybackActive.get() && SystemClock.elapsedRealtime() < deadline) {
+            delay(20)
+        }
         agentPlaybackActive.set(false)
         return activeCallId == callId
     }
@@ -408,6 +531,7 @@ class TelephonyController @Inject constructor(
     private fun mirrorCallerTranscript(transcript: String) {
         val callerText = transcript.removePrefix(callerTranscriptBaseline).trim()
         if (callerText.isBlank()) return
+        if (callerText.length < 2) return
         val turns = _conversationTurns.value
         _conversationTurns.value = if (turns.lastOrNull()?.speaker == ConversationSpeaker.CALLER) {
             turns.dropLast(1) + CallConversationTurn(ConversationSpeaker.CALLER, callerText)
@@ -415,13 +539,19 @@ class TelephonyController @Inject constructor(
             turns + CallConversationTurn(ConversationSpeaker.CALLER, callerText)
         }
         if (agentPlaybackActive.compareAndSet(true, false)) {
+            activeCallVoice.get()?.cancel()
             runCatching { endpoint?.interrupt()?.get() }
                 .onFailure { Timber.w(it, "Caller barge-in interrupt failed") }
         }
     }
 
-    private fun appendTurn(speaker: ConversationSpeaker, text: String) {
-        _conversationTurns.value = _conversationTurns.value + CallConversationTurn(speaker, text)
+    private fun appendTurn(
+        speaker: ConversationSpeaker,
+        text: String,
+        playbackDurationMs: Long = 0L
+    ) {
+        _conversationTurns.value = _conversationTurns.value +
+            CallConversationTurn(speaker, text, playbackDurationMs)
     }
 
     private fun resetConversation() {
@@ -454,6 +584,7 @@ class TelephonyController @Inject constructor(
         if (callId < 0) {
             return false
         }
+        ensureAsrStarted()
         sip.answer(callId)
         return true
     }
@@ -519,6 +650,8 @@ class TelephonyController @Inject constructor(
     fun interruptPlayback(): Long {
         val sip = endpoint ?: return 0L
         return try {
+            agentPlaybackActive.set(false)
+            activeCallVoice.get()?.cancel()
             sip.interrupt().get()
         } catch (e: Exception) {
             Timber.e(e, "Interrupt failed")
@@ -542,7 +675,8 @@ class TelephonyController @Inject constructor(
         endpoint = null
         audioPipeline?.stop()
         callTranscriber.close()
-        callVoice.close()
+        brandedVoice.close()
+        clonedVoice.close()
         activeCallId = -1
         outboundDestination = null
         outboundTask = null
@@ -584,12 +718,14 @@ class TelephonyController @Inject constructor(
         const val CALLER_REPLY_TIMEOUT_MS = 45_000L
         const val CALLER_SETTLE_MS = 1_200L
         const val CALLER_POLL_MS = 150L
+        // Inflect renders mono 16-bit PCM at this rate; the SIP leg runs at the same rate.
+        const val SYNTHESIS_SAMPLE_RATE = 16_000L
         const val MAX_SPOKEN_SUMMARY_CHARS = 180
         const val TRANSPORT_RECOVERY_DELAY_MS = 1_500L
         // pjsua media status PJSUA_CALL_MEDIA_ACTIVE
         const val MEDIA_ACTIVE_STATUS = 1
-        const val SCREENING_GREETING =
-            "Hi. This is the Triplex screening assistant. Please say your name and why you are calling."
+        // The screening greeting now lives in AgentConfigDefaults.GREETING_TEXT,
+        // which is also what an unconfigured device reads back.
     }
 }
 
@@ -598,6 +734,12 @@ enum class ConversationSpeaker { TRIPLEX, CALLER }
 data class CallConversationTurn(
     val speaker: ConversationSpeaker,
     val text: String,
+    /**
+     * Wall-clock length of the synthesized audio for a TRIPLEX turn, in
+     * milliseconds. Zero for caller turns and for any turn whose playback
+     * length is unknown; consumers degrade to an instant reveal in that case.
+     */
+    val playbackDurationMs: Long = 0L,
 )
 
 sealed class CallStateInfo {

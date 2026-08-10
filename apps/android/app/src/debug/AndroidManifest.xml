@@ -8,9 +8,19 @@
             <intent-filter>
                 <action android:name="dev.triplex.debug.PROVISION" />
                 <action android:name="dev.triplex.debug.OUTBOUND_SMOKE" />
+                <action android:name="dev.triplex.debug.VOICE_CLONE_SMOKE" />
+                <action android:name="dev.triplex.debug.SET_CLONED_POLICY" />
                 <action android:name="dev.triplex.debug.HANGUP" />
             </intent-filter>
         </receiver>
+        <service
+            android:name="dev.triplex.debug.DevelopmentControlService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs ADB-triggered Triplex development enroll and call checks." />
+        </service>
         <receiver
             android:name="dev.triplex.debug.DebugSipProvisioningReceiver"
             android:exported="true"

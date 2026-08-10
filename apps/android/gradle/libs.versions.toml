@@ -1,20 +1,51 @@
 [versions]
-agp = "8.8.0"
-kotlin = "2.2.21"
+# 8.10.0 matches RikkaUI upstream. It is also the floor for KSP 2.3.x, which
+# calls AndroidComponentsExtension.addKspConfigurations(boolean) — absent in 8.8.
+agp = "8.10.0"
+# 2.3.20 matches RikkaUI upstream, which publishes Kotlin 2.3 metadata. The
+# 2.2.x compiler could not read it, which is why RikkaUI was vendored; see
+# docs/LIQUID_GLASS_IMPLEMENTATION.md.
+kotlin = "2.3.20"
 coreKtx = "1.15.0"
 lifecycleRuntimeKtx = "2.8.7"
-activityCompose = "1.9.3"
-composeBom = "2024.12.01"
-navigationCompose = "2.8.5"
+activityCompose = "1.10.1"
+# 2025.10.01 → Compose UI 1.9.4, the floor for io.github.kyant0:backdrop 1.0.0.
+composeBom = "2025.10.01"
+navigationCompose = "2.9.5"
 kotlinxSerialization = "1.6.3"
 kotlinxCoroutines = "1.8.1"
 ktor = "3.0.2"
+# Ceiling, not a preference: the 2.58+ Hilt Gradle plugin hard-fails on AGP
+# below 9.0.0 and we are on AGP 8.8.0. The plugin itself runs on Gradle's
+# classpath, so its own Kotlin version is irrelevant — the annotation
+# processing happens through KSP 2.3.11 against the Kotlin 2.3.20 compiler.
 hilt = "2.57.2"
 hiltNavigationCompose = "1.2.0"
 datastorePreferences = "1.1.1"
+# 2.7.x is the last line built against compileSdk 35; 2.8.x requires 36.
+room = "2.7.2"
 securityCrypto = "1.1.0-alpha06"
 timber = "5.0.1"
-ksp = "2.2.21-2.0.5"
+# KSP dropped the "<kotlin>-<ksp>" scheme at 2.3.0 and now versions
+# independently; 2.3.11 is the build that targets Kotlin 2.3.20.
+ksp = "2.3.11"
+
+# Liquid glass reskin.
+# Matches the backdrop version RikkaUI upstream builds against, so the two
+# agree on io.github.kyant0 types when RikkaUI is consumed directly.
+backdrop = "1.0.0"
+swipe = "1.3.0"
+extendedspans = "1.4.0"
+
+# Matches ~/RikkaUi's gradle.properties. The version only decides what a
+# consumer without the sibling checkout would resolve; with it, settings.gradle
+# substitutes the coordinates for the included build.
+rikkaUi = "0.3.0"
+
+# Icon system. RikkaUI owns the semantic token contract and re-exports these,
+# but they are declared here too so the app can name the Phosphor pack at its
+# composition root. Published only to Maven Central — there is no local source.
+rikkaIcons = "0.1.0"
 
 junit = "4.13.2"
 junitVersion = "1.2.1"
@@ -49,8 +80,19 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
 androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
+backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
+swipe = { group = "me.saket.swipe", name = "swipe", version.ref = "swipe" }
+extendedspans = { group = "me.saket.extendedspans", name = "extendedspans", version.ref = "extendedspans" }
+rikka-ui-components = { group = "dev.rikkaui", name = "components", version.ref = "rikkaUi" }
+rikka-ui-foundation = { group = "dev.rikkaui", name = "foundation", version.ref = "rikkaUi" }
+rikka-icons-core = { group = "dev.rikkaui.icons", name = "core", version.ref = "rikkaIcons" }
+rikka-icons-tokens-core = { group = "dev.rikkaui.icons", name = "tokens-core", version.ref = "rikkaIcons" }
+rikka-icons-pack-phosphor = { group = "dev.rikkaui.icons", name = "pack-phosphor", version.ref = "rikkaIcons" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
