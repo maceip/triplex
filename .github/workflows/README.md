@@ -19,8 +19,9 @@ allocation guard cannot skip transport, gateway, or Android.
 
 Scripts live under `testlab/validation/` (not a top-level `scripts/` tree).
 Transport no longer pulls a non-existent `plivo/plivo-simulator` image.
-Android CI checkouts `triplex-analytics` + `RikkaUi` as siblings and runs with
-`-Ptriplex.skipNative=true` until `prepare-native.sh` is cached as an artifact.
+Android CI checkouts `triplex-analytics` as a sibling, resolves RikkaUI from
+Maven Central, and runs with `-Ptriplex.skipNative=true` until
+`prepare-native.sh` is cached as an artifact.
 ```
 
 ## Jobs

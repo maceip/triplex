@@ -137,6 +137,8 @@ allocation guard, agent-core, transport validation, gateway tests, the
 conversation loop, and Android JVM unit tests; an evidence gate aggregates
 the artifacts. Details live in `.github/workflows/README.md`.
 
+CI status probe: 1 (workflow path/services/Android gate fixes).
+
 ## A rule worth knowing
 
 We do not claim something works until we have seen it work for real: on a

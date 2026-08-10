@@ -7,6 +7,11 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
 env:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
   RUST_BACKTRACE: "1"
@@ -203,6 +208,7 @@ jobs:
 
       - name: Comment PR with results
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -348,11 +354,9 @@ jobs:
           repository: maceip/triplex-analytics
           path: triplex-analytics
 
-      - name: Checkout RikkaUi
-        uses: actions/checkout@v4
-        with:
-          repository: maceip/RikkaUi
-          path: RikkaUi
+      # Resolve RikkaUI from Maven Central in CI. Including the RikkaUi source
+      # composite pulls :sample, whose Paparazzi plugin requires a JVM 21
+      # runtime and breaks the Java 17 Android toolchain used here.
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -367,7 +371,7 @@ jobs:
         run: yes | sdkmanager --licenses >/dev/null || true
 
       - name: Install Android platform + build-tools
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > triplex/apps/android/local.properties
@@ -385,7 +389,6 @@ jobs:
         run: |
           ./gradlew :telephony-plivo:testDebugUnitTest :app:testDebugUnitTest \
             -Ptriplex.skipNative=true \
-            -PrikkaUiPath=$GITHUB_WORKSPACE/RikkaUi \
             --stacktrace
 
       - name: Stage android evidence
