@@ -137,7 +137,7 @@ allocation guard, agent-core, transport validation, gateway tests, the
 conversation loop, and Android JVM unit tests; an evidence gate aggregates
 the artifacts. Details live in `.github/workflows/README.md`.
 
-CI status probe: 3 (app minSdk 33 to match RikkaUI composite).
+CI status probe: 4 (second green verification after full gate pass).
 
 ## A rule worth knowing
 
