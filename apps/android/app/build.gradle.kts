@@ -23,7 +23,10 @@ android {
 
     defaultConfig {
         applicationId = "dev.triplex"
-        minSdk = 29
+        // RikkaUI components (sibling composite / current tip) declare minSdk 33.
+        // The spike previously targeted API 29; keep telephony libraries at 29
+        // until the product floor is decided, but the UI shell must match RikkaUI.
+        minSdk = 33
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
