@@ -6,11 +6,16 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 
 ```
 .github/workflows/ci.yml
-├── allocation-guard      → RT zero-allocation soak tests (Rust counting allocator)
+├── allocation-guard      → RT zero-allocation soak tests (RtGuardAlloc)
+├── agent-core-tests      → Rust agent-core unit + integration tests
 ├── transport-validation  → Gradle + Python validation suite (p50/p95/drops gates)
 ├── gateway-validation    → FastAPI integration tests (PostgreSQL)
+├── dialogue-tests        → Kotlin conversation-loop unit tests
 ├── android-build         → APK assembly + unit tests
 └── evidence-gate         → Artifact collection & manifest verification
+
+Jobs above evidence-gate run independently (no needs: chain) so a red
+allocation guard cannot skip transport, gateway, or Android.
 ```
 
 ## Jobs
@@ -20,10 +25,9 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 **Purpose**: Verify zero heap allocations on RT-tagged threads.
 
 **Implementation**:
-- Build native Rust library with `rt-alloc-counting` feature
-- Run `rt_alloc.rs` soak tests (10,000 iterations)
-- Run `vad_rt.rs` VAD-specific tests (1,000 frames)
-- Assert `allocation_count == 0`
+- Run `rt_alloc` and `vad_rt` integration tests via `--test` (not positional filters)
+- Use `RtGuardAlloc` + `tag_rt_thread` (same guard as agent-core)
+- Assert `rtguard::violations() == 0`
 
 **Artifacts**:
 - `allocation-report.json` - Total allocation events
@@ -122,7 +126,11 @@ All evidence files must conform to schemas before archiving.
 ```bash
 # Run allocation guard tests
 cd apps/android/native-media
-cargo test --features rt-alloc-counting -- --nocapture
+cargo test --release --test rt_alloc --test vad_rt -- --nocapture
+
+# Run agent-core tests
+cd apps/android/agent
+cargo test --all-targets
 
 # Run transport validation
 ./gradlew :telephony-plivo:transportValidation
