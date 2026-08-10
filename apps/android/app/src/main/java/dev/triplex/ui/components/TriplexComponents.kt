@@ -29,10 +29,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import zed.rainxch.rikkaicons.core.IconToken
@@ -45,6 +43,7 @@ import zed.rainxch.rikkaui.components.ui.button.IconButtonSize
 import zed.rainxch.rikkaui.components.ui.glass.GlassCard
 import zed.rainxch.rikkaui.components.ui.glass.GlassContainer
 import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
+import zed.rainxch.rikkaui.components.ui.glass.GlassScenery
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
 import zed.rainxch.rikkaui.components.ui.text.Text
@@ -53,6 +52,7 @@ import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBar
 import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBarVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
 import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.triplexScenery
 import kotlinx.coroutines.delay
 
 enum class TriplexButtonStyle {
@@ -74,62 +74,24 @@ enum class TriplexCardTone {
 /**
  * App-wide atmospheric surface, and the backdrop every glass component refracts.
  *
- * The gradient and the two aura circles are recorded into a layer that
- * [LocalGlassBackdrop] hands to glass surfaces nested in [content], so a
- * `GlassCard` or `GlassPanel` dropped anywhere inside a screen samples this
- * atmosphere without being passed the backdrop by hand. Content is drawn as a
- * sibling of that layer, never a child of it — a surface that sampled a layer it
- * belonged to would feed back into itself.
+ * Paints [triplexScenery] through [GlassScenery] — violet/cyan lobes at strengths
+ * a 12–44dp lens can actually displace across. The old flat gradient + ~9–18%
+ * auras starved blur, refraction, and dispersion.
  *
  * `TriplexShell` wraps its whole scaffold in one of these, which is why screens
  * no longer call it themselves: the nav bar and the screen underneath have to
  * refract the *same* layer, and a per-screen backdrop would leave the chrome
  * with nothing to sample.
- *
- * It still uses only cheap draw operations.
  */
 @Composable
 fun TriplexBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val colors = TriplexDesign.colors
-    val background = RikkaTheme.colors.background
+    val isDark = RikkaTheme.colors.background.luminance() < 0.5f
     GlassContainer(
         modifier = modifier.fillMaxSize(),
-        background = {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to colors.surfaceRaised,
-                            0.52f to background,
-                            1f to colors.surfaceSunken
-                        )
-                    )
-                    .drawBehind {
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(colors.auraPrimary, Color.Transparent),
-                                center = Offset(size.width * 0.92f, size.height * 0.06f),
-                                radius = size.width * 0.7f
-                            ),
-                            radius = size.width * 0.7f,
-                            center = Offset(size.width * 0.92f, size.height * 0.06f)
-                        )
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(colors.auraSecondary, Color.Transparent),
-                                center = Offset(size.width * 0.08f, size.height * 0.78f),
-                                radius = size.width * 0.62f
-                            ),
-                            radius = size.width * 0.62f,
-                            center = Offset(size.width * 0.08f, size.height * 0.78f)
-                        )
-                    }
-            )
-        }
+        background = { GlassScenery(scenery = triplexScenery(isDark)) },
     ) {
         content()
     }
