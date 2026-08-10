@@ -214,6 +214,7 @@ struct TriplexPjsipEngine {
   std::array<char, kPathCapacity> ca_bundle_path{};
   std::array<char, kUriCapacity> identity_uri{};
   std::array<char, kUriCapacity> registrar_uri{};
+  std::array<char, kUriCapacity> force_contact_uri{};
   uint16_t tls_port = 5061;
   uint16_t registration_timeout_seconds = 300;
 
@@ -723,11 +724,18 @@ bool configure_identity(TriplexPjsipEngine *engine,
                     engine->domain.data());
   const int registrar_length = std::snprintf(
       engine->registrar_uri.data(), engine->registrar_uri.size(),
-      "sip:%s:5060;transport=udp", engine->domain.data());
+      "sip:%s:%u;transport=tls", engine->domain.data(),
+      static_cast<unsigned>(engine->tls_port));
+  const int contact_length = std::snprintf(
+      engine->force_contact_uri.data(), engine->force_contact_uri.size(),
+      "sip:%s@%s;transport=tls;ob", engine->username.data(),
+      engine->domain.data());
   return identity_length > 0 &&
          static_cast<size_t>(identity_length) < engine->identity_uri.size() &&
          registrar_length > 0 &&
-         static_cast<size_t>(registrar_length) < engine->registrar_uri.size();
+         static_cast<size_t>(registrar_length) < engine->registrar_uri.size() &&
+         contact_length > 0 &&
+         static_cast<size_t>(contact_length) < engine->force_contact_uri.size();
 }
 
 pj_status_t initialize_library(TriplexPjsipEngine *engine) {
@@ -829,6 +837,7 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   pjsua_acc_config_default(&account_config);
   account_config.id = pj_str(engine->identity_uri.data());
   account_config.reg_uri = pj_str(engine->registrar_uri.data());
+  account_config.force_contact = pj_str(engine->force_contact_uri.data());
   account_config.reg_timeout = engine->registration_timeout_seconds;
   account_config.reg_first_retry_interval = 1;
   account_config.reg_retry_interval = 5;
@@ -843,9 +852,15 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
   account_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
   account_config.srtp_secure_signaling = 0;
-  account_config.allow_contact_rewrite = PJ_TRUE;
-  account_config.contact_use_src_port = PJ_TRUE;
-  account_config.use_rfc5626 = PJ_FALSE;
+  // Do not rewrite Contact to the NATed host:port. Plivo must route inbound
+  // INVITEs via the registration flow; advertising a consumer NAT mapping
+  // makes Call/Dial attempt a new connection that never completes
+  // (hangup_cause=Network Error).
+  account_config.allow_contact_rewrite = PJ_FALSE;
+  account_config.contact_rewrite_method = PJSUA_CONTACT_REWRITE_UNREGISTER;
+  account_config.contact_use_src_port = PJ_FALSE;
+  account_config.use_rfc5626 = PJ_TRUE;
+  account_config.ka_interval = 15;
   account_config.cred_count = 1;
   account_config.cred_info[0].realm = pj_str(engine->realm.data());
   account_config.cred_info[0].scheme = pj_str(const_cast<char *>("digest"));
