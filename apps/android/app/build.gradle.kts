@@ -57,10 +57,18 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    // CI sets -Ptriplex.skipNative=true so JVM unit tests can run without the
+    // PJSIP/Mbed TLS stage from apps/android/scripts/prepare-native.sh.
+    val skipNative = providers.gradleProperty("triplex.skipNative")
+        .getOrElse("false")
+        .equals("true", ignoreCase = true)
+
+    if (!skipNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -69,10 +77,12 @@ android {
             // Matches the prepared telephony native stage, which is arm64-only.
             abiFilters += listOf("arm64-v8a")
         }
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
-                arguments += listOf("-DANDROID_STL=c++_static")
+        if (!skipNative) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
+                    arguments += listOf("-DANDROID_STL=c++_static")
+                }
             }
         }
     }

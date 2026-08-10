@@ -8,14 +8,19 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 .github/workflows/ci.yml
 ├── allocation-guard      → RT zero-allocation soak tests (RtGuardAlloc)
 ├── agent-core-tests      → Rust agent-core unit + integration tests
-├── transport-validation  → Gradle + Python validation suite (p50/p95/drops gates)
+├── transport-validation  → Kotlin suite + host C++ lifecycle + Python gates
 ├── gateway-validation    → FastAPI integration tests (PostgreSQL)
 ├── dialogue-tests        → Kotlin conversation-loop unit tests
-├── android-build         → APK assembly + unit tests
+├── android-build         → JVM unit tests (native stage skipped in CI)
 └── evidence-gate         → Artifact collection & manifest verification
 
 Jobs above evidence-gate run independently (no needs: chain) so a red
 allocation guard cannot skip transport, gateway, or Android.
+
+Scripts live under `testlab/validation/` (not a top-level `scripts/` tree).
+Transport no longer pulls a non-existent `plivo/plivo-simulator` image.
+Android CI checkouts `triplex-analytics` + `RikkaUi` as siblings and runs with
+`-Ptriplex.skipNative=true` until `prepare-native.sh` is cached as an artifact.
 ```
 
 ## Jobs
@@ -39,12 +44,14 @@ allocation guard cannot skip transport, gateway, or Android.
 
 **Purpose**: Validate p50/p95 latency and packet drops against thresholds.
 
-**Gradle Task**: `:telephony-plivo:transportValidation`
+**Gradle / host steps**:
+- `:telephony-plivo:testDebugUnitTest` (writes CI_MOCK kotlin suite JSON)
+- Host CMake build of `telephony-plivo/src/test/cpp` lifecycle tests
 
-**Python Scripts**:
-- `compare.py --mode=simulated` - Network simulation
-- `compare.py --mode=kotlin` - Kotlin coroutine tests
-- `compare.py --mode=cpp` - Native C++ transport tests
+**Python Scripts** (`testlab/validation/`):
+- `compare.py --mode=simulated` - Network simulation (seeded, gate-stable)
+- `compare.py --mode=kotlin` - Maps kotlin suite artifact → latency schema
+- `compare.py --mode=cpp` - Maps C++ suite artifact → latency schema
 - `validate_gates.py` - Enforce thresholds
 
 **Gates** (p95 release objectives):
@@ -77,15 +84,16 @@ allocation guard cannot skip transport, gateway, or Android.
 
 ### 4. Android Build
 
-**Purpose**: Build APK and run unit tests.
+**Purpose**: Run Android JVM unit tests with sibling design-system deps.
 
 **Tasks**:
-- `:app:assembleDebug`
+- `:telephony-plivo:testDebugUnitTest`
 - `:app:testDebugUnitTest`
+- Native CMake skipped via `-Ptriplex.skipNative=true` (full APK assemble still
+  requires `apps/android/scripts/prepare-native.sh` locally)
 
 **Artifacts**:
-- `app-debug.apk`
-- Test reports
+- Test reports / test-results (flattened for the evidence gate)
 
 ### 5. Evidence Gate
 

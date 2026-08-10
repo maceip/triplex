@@ -18,17 +18,29 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
-        externalNativeBuild {
-            cmake {
-                arguments += listOf("-DANDROID_STL=c++_static")
+        val skipNative = providers.gradleProperty("triplex.skipNative")
+            .getOrElse("false")
+            .equals("true", ignoreCase = true)
+        if (!skipNative) {
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf("-DANDROID_STL=c++_static")
+                }
             }
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    // CI sets -Ptriplex.skipNative=true for JVM policy/unit tests without the
+    // prepared PJSIP stage.
+    val skipNative = providers.gradleProperty("triplex.skipNative")
+        .getOrElse("false")
+        .equals("true", ignoreCase = true)
+    if (!skipNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
