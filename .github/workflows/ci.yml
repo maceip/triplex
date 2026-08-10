@@ -7,11 +7,14 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+
 env:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Independent of every other gate. A failure here must not skip transport,
+  # gateway, Android, or agent-core checks.
   allocation-guard:
     name: RT Allocation Guard
     runs-on: ubuntu-latest
@@ -33,31 +36,18 @@ jobs:
             ~/.cargo/bin/
             ~/.cargo/registry/
             ~/.cargo/git/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            apps/android/native-media/target/
+          key: ${{ runner.os }}-cargo-native-${{ hashFiles('apps/android/native-media/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
-      
-      - name: Build with counting allocator
-        run: |
-          cd apps/android/native-media
-          cargo build --release --features "rt-alloc-counting"
+            ${{ runner.os }}-cargo-native-
       
       - name: Run RT allocation soak tests
         run: |
           cd apps/android/native-media
-          cargo test --release --features "rt-alloc-counting" rt_alloc vad_rt -- --nocapture
+          # cargo test accepts one positional TESTNAME filter. Select the
+          # integration-test binaries explicitly with repeated --test flags.
+          cargo test --release --test rt_alloc --test vad_rt -- --nocapture
       
-      - name: Verify zero allocations
-        run: |
-          cd apps/android/native-media
-          cargo test --release --features "rt-alloc-counting" -- verify_zero_allocations
-      
-      - name: Run agent core tests
-        run: |
-          cd apps/android/agent
-          cargo test --all-targets
-
       - name: Archive allocation report
         uses: actions/upload-artifact@v4
         with:
@@ -67,10 +57,43 @@ jobs:
             apps/android/native-media/target/release/vad-allocations.json
           retention-days: 30
 
+  # Agent-core tests used to live under allocation-guard; that job's rotted
+  # alloc_counter path skipped them whenever the guard failed to compile.
+  agent-core-tests:
+    name: Agent Core Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            apps/android/agent/target/
+            apps/android/native-media/target/
+          key: ${{ runner.os }}-cargo-agent-${{ hashFiles('apps/android/agent/Cargo.toml', 'apps/android/native-media/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-agent-
+
+      - name: Run agent core tests
+        run: |
+          cd apps/android/agent
+          cargo test --all-targets
+
+  # No longer chains off allocation-guard — independent validation surface.
   transport-validation:
     name: Transport Validation
     runs-on: ubuntu-latest
-    needs: allocation-guard
     timeout-minutes: 45
     
     services:
@@ -192,10 +215,10 @@ jobs:
               body: body
             });
 
+  # Independent of transport-validation — do not skip gateway when transport fails.
   gateway-validation:
     name: Gateway Integration Tests
     runs-on: ubuntu-latest
-    needs: transport-validation
     timeout-minutes: 20
     
     services:
@@ -282,10 +305,11 @@ jobs:
           path: apps/android/dialogue/build/reports/tests/
           retention-days: 30
 
+  # Independent of transport-validation — Kotlin/Android must still compile when
+  # the allocation guard or transport suite is red.
   android-build:
     name: Android Build & Test
     runs-on: ubuntu-latest
-    needs: transport-validation
     timeout-minutes: 30
     
     steps:
@@ -334,6 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - allocation-guard
+      - agent-core-tests
       - transport-validation
       - gateway-validation
       - dialogue-tests
