@@ -23,6 +23,21 @@ data class AgentInboundConfig(
     val voicePolicy: AutomationVoicePolicy = AutomationVoicePolicy.PRESET,
     /** Chips the incoming sheet offers; picking one makes the agent speak it. */
     val quickReplies: List<String> = AgentConfigDefaults.QUICK_REPLIES,
+    /**
+     * Take inbound calls on the phone instead of having the provider screen
+     * them.
+     *
+     * Off by default, and that default is the honest one rather than a
+     * cautious one: the SIP media path on this device works and the gateway
+     * will bridge to it the moment this is set, but no inbound PSTN call has
+     * ever completed that way — the provider account that would route one is
+     * not switched on. Turning this on before that is true would connect a
+     * caller to a phone nothing has ever reached and leave them listening to
+     * silence, which is exactly the pretend-connection the routing rules
+     * forbid. This is the flip; it should be made once a real call has been
+     * seen to work, not before.
+     */
+    val bridgeCallsToPhone: Boolean = false,
 )
 
 data class AgentOutboundConfig(

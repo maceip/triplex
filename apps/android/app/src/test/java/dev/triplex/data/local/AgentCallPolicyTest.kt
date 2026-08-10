@@ -1,6 +1,9 @@
 package dev.triplex.data.local
 
+import dev.triplex.dialogue.CallDirection
+import dev.triplex.dialogue.FallbackPolicy
 import dev.triplex.domain.model.AutomationCatalog
+import dev.triplex.domain.model.TaskDefinition
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,11 +69,75 @@ class AgentCallPolicyTest {
 
         assertEquals(AutomationCatalog.BookZoomMeeting, template)
         assertTrue(requireNotNull(template).opening.isNotBlank())
-        assertEquals(
-            "Thank you. I recorded your proposed meeting details: 9am Tuesday. " +
-                "The account owner will confirm availability before an invitation is sent.",
-            template.acknowledgement("9am Tuesday"),
+        assertTrue(template.goal.isNotBlank())
+        assertTrue(template.collect.isNotEmpty())
+    }
+
+    @Test
+    fun `a screening plan carries the user's greeting and screening limits`() = runTest {
+        repository.setGreetingText("Hi, this is Ava's assistant.")
+
+        val plan = requireNotNull(AgentCallPolicy.screeningPlan(repository.inboundConfig()))
+
+        assertEquals(CallDirection.INBOUND, plan.direction)
+        assertEquals("Hi, this is Ava's assistant.", plan.opening)
+        assertEquals(6, plan.budget.maxTurns)
+        // Screening buys a turn on a model hiccup rather than hanging up on
+        // a live caller mid-sentence.
+        assertTrue(plan.fallback is FallbackPolicy.FailSoft)
+    }
+
+    @Test
+    fun `an automation plan opens with the automation and briefs its goal`() = runTest {
+        val plan = requireNotNull(
+            AgentCallPolicy.screeningPlan(
+                repository.inboundConfig(),
+                AutomationCatalog.BookZoomMeeting.id,
+            )
         )
+
+        assertEquals(AutomationCatalog.BookZoomMeeting.opening, plan.opening)
+        assertTrue(plan.systemInstructions.contains(AutomationCatalog.BookZoomMeeting.goal))
+        assertTrue(plan.systemInstructions.contains("email address"))
+    }
+
+    @Test
+    fun `a disabled automation yields no plan rather than the generic agent`() = runTest {
+        val id = AutomationCatalog.BookZoomMeeting.id
+        repository.setAutomationEnabled(id, false)
+
+        // Silently falling back to generic screening would give the caller a
+        // different conversation than the user asked for.
+        assertNull(AgentCallPolicy.screeningPlan(repository.inboundConfig(), id))
+    }
+
+    @Test
+    fun `an outbound plan states only the task parameters that have values`() {
+        val plan = AgentCallPolicy.outboundPlan(
+            TaskDefinition(
+                id = "task-1",
+                user_id = "user-1",
+                task_type = "item_return",
+                destination_number = "+14155550188",
+                task_params = mapOf(
+                    "product" to "a 32-inch monitor",
+                    "desired_outcome" to "a refund",
+                    "order_number" to "SG-4471-2290",
+                    "return_reason" to "",
+                ),
+                status = "active",
+                created_at = "2026-08-10T00:00:00Z",
+            )
+        )
+
+        assertEquals(CallDirection.OUTBOUND, plan.direction)
+        assertTrue(plan.opening.contains("a 32-inch monitor"))
+        assertTrue(plan.opening.contains("The order number is SG-4471-2290."))
+        assertFalse(plan.opening.contains("The reason is"))
+        assertTrue(plan.systemInstructions.contains("order number: SG-4471-2290"))
+        // Outbound the agent is transacting for the user, so a reasoner failure
+        // ends the call rather than stalling for another turn.
+        assertEquals(FallbackPolicy.FailClosed, plan.fallback)
     }
 
     @Test

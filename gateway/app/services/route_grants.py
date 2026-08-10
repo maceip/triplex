@@ -46,6 +46,10 @@ class IssuedRouteGrant:
     header_name: str
     token: str
     expires_at: datetime
+    #: The normalized destination, for the audit record. Held separately from
+    #: :attr:`sip_uri` so an audit entry never has to be parsed back out of a
+    #: URI, and never accidentally carries the grant token with it.
+    destination_number_for_audit: str
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,7 @@ class OutboundRouteService:
         signing_key: str,
         ttl_seconds: int,
         sip_domain: str,
+        device_heartbeat_ttl_seconds: int = 300,
     ):
         if len(signing_key.encode("utf-8")) < 32:
             raise RouteGrantError("Outbound route authorization is not configured")
@@ -123,6 +128,7 @@ class OutboundRouteService:
         self.signing_key = signing_key
         self.ttl_seconds = ttl_seconds
         self.sip_domain = sip_domain
+        self.device_heartbeat_ttl_seconds = device_heartbeat_ttl_seconds
 
     async def issue(
         self,
@@ -161,11 +167,19 @@ class OutboundRouteService:
         if credential is None:
             raise RouteGrantError("No Plivo SIP endpoint is provisioned")
 
+        # A grant authorizes a call the *device* will place, so the device has
+        # to be there. `ready` alone does not establish that: it is a flag the
+        # phone last wrote, and a phone that has been off since Tuesday leaves
+        # it set. Requiring a recent heartbeat is what makes this check about
+        # the present rather than about history.
+        heartbeat_floor = now - timedelta(seconds=self.device_heartbeat_ttl_seconds)
         ready_result = await self.db.execute(
             select(DeviceRegistrationDB.id)
             .where(
                 DeviceRegistrationDB.user_id == user_id,
                 DeviceRegistrationDB.ready.is_(True),
+                DeviceRegistrationDB.last_heartbeat >= heartbeat_floor,
+                DeviceRegistrationDB.sip_endpoint != "",
             )
             .limit(1)
         )
@@ -245,6 +259,7 @@ class OutboundRouteService:
             header_name=self.HEADER_NAME,
             token=token,
             expires_at=expires_at,
+            destination_number_for_audit=destination,
         )
 
     async def consume(

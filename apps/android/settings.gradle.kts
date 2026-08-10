@@ -22,6 +22,17 @@ dependencyResolutionManagement {
 
 rootProject.name = "Triplex"
 include(":app")
+
+// The platform-free turn loop. A standalone build rather than a subproject so
+// `cd dialogue && gradle test` runs the conversation tests on a bare JVM —
+// without the Android SDK, without an AGP-compatible JDK, and without the two
+// sibling checkouts the app needs. Composed in here so :app consumes it as an
+// ordinary dependency.
+includeBuild("dialogue") {
+    dependencySubstitution {
+        substitute(module("dev.triplex:dialogue")).using(project(":"))
+    }
+}
 include(":telephony-plivo")
 include(":telemetry-client")
 project(":telemetry-client").projectDir = file("../../../triplex-analytics/android/telemetry-client")
