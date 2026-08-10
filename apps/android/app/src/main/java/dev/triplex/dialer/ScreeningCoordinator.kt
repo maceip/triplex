@@ -3,6 +3,7 @@ package dev.triplex.dialer
 import dev.triplex.data.call.SipCallController
 import dev.triplex.data.call.SipCallSource
 import dev.triplex.data.call.SipScreeningState
+import dev.triplex.data.local.AgentConfigRepository
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.remote.GatewayApi
 import dev.triplex.data.remote.ScreeningSession
@@ -49,6 +50,7 @@ class ScreeningCoordinator @Inject constructor(
     private val secureStorage: SecureStorage,
     private val gatewayApi: GatewayApi,
     private val sipCallSource: SipCallSource,
+    private val agentConfig: AgentConfigRepository,
 ) : SipCallController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
@@ -110,7 +112,7 @@ class ScreeningCoordinator @Inject constructor(
             } else {
                 val endpoint = "sip:$username@phone.plivo.com"
                 userRepository.registerDevice(endpoint, pushToken = null)
-                userRepository.setDeviceReady(true)
+                launch { publishReadiness() }
             }
             launch {
                 telephonyController.callState.collectLatest(::onCallState)
@@ -130,6 +132,36 @@ class ScreeningCoordinator @Inject constructor(
                 }
             }
             launch { pollGatewayScreening() }
+        }
+    }
+
+    /**
+     * Keeps the gateway's picture of this phone current.
+     *
+     * Readiness is a claim about *now*, and the gateway stops believing it
+     * after a few minutes without a check-in — otherwise a phone that has been
+     * switched off since Tuesday still has `ready = true` in the row it wrote
+     * before it went away, and a live caller gets routed into nothing. So this
+     * re-states the claim on a timer, and re-states it immediately whenever
+     * SIP registration changes, so losing registration withdraws the claim
+     * rather than waiting for it to expire.
+     *
+     * Media readiness is the separate, stronger claim: it tells the gateway to
+     * connect callers straight to this device instead of screening them, and it
+     * is only made when the user has turned the handoff on
+     * ([dev.triplex.data.local.AgentInboundConfig.bridgeCallsToPhone]).
+     */
+    private suspend fun publishReadiness() {
+        var lastRegistered: Boolean? = null
+        while (true) {
+            val registered = telephonyController.sipState.value in READY_SIP_STATES
+            val bridge = registered && agentConfig.inboundConfig().bridgeCallsToPhone
+            if (registered != lastRegistered) {
+                Timber.i("Publishing readiness: registered=%s bridge=%s", registered, bridge)
+            }
+            lastRegistered = registered
+            userRepository.setDeviceReady(ready = registered, mediaReady = bridge)
+            delay(HEARTBEAT_INTERVAL_MS)
         }
     }
 
@@ -289,5 +321,18 @@ class ScreeningCoordinator @Inject constructor(
 
     private companion object {
         const val GATEWAY_POLL_INTERVAL_MS = 750L
+
+        /**
+         * Comfortably inside the gateway's `DEVICE_HEARTBEAT_TTL_SECONDS`
+         * (300 s by default), so a single missed check-in — a tunnel, a
+         * backgrounded app — does not make the phone unreachable.
+         */
+        const val HEARTBEAT_INTERVAL_MS = 90_000L
+
+        /** SIP states in which this phone would actually answer an INVITE. */
+        val READY_SIP_STATES = setOf(
+            TelephonyController.SipState.READY,
+            TelephonyController.SipState.IN_CALL,
+        )
     }
 }

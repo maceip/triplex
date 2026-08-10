@@ -92,7 +92,7 @@ class DevelopmentControlService : Service() {
         secureStorage.setDeviceToken(token)
         secureStorage.setDeviceId(deviceId)
         val credentialsReady = userRepository.syncSipCredentials()
-        val deviceReady = userRepository.setDeviceReady(true) is Result.Success
+        val deviceReady = userRepository.setDeviceReady(ready = true, mediaReady = false) is Result.Success
         check(credentialsReady) { "production SIP credentials were not returned" }
         check(deviceReady) { "production gateway did not mark the device ready" }
         Log.i(TAG, "TRIPLEX_DEV_PROVISION PASS credentials=true ready=true")
@@ -102,7 +102,7 @@ class DevelopmentControlService : Service() {
         val destination = requireNotNull(intent.getStringExtra(EXTRA_DESTINATION))
         require(E164.matches(destination)) { "invalid E.164 destination" }
         check(userRepository.syncSipCredentials()) { "SIP credentials unavailable" }
-        check(userRepository.setDeviceReady(true) is Result.Success) {
+        check(userRepository.setDeviceReady(ready = true, mediaReady = false) is Result.Success) {
             "device readiness update failed"
         }
 

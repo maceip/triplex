@@ -114,6 +114,9 @@ kotlin {
 
 dependencies {
     implementation(project(":telephony-plivo"))
+    // The multi-turn conversation loop (apps/android/dialogue), consumed
+    // through the composite build wired in settings.gradle.kts.
+    implementation("dev.triplex:dialogue")
     implementation(project(":telemetry-client"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation("com.google.ai.edge.litert:litert:2.1.3")

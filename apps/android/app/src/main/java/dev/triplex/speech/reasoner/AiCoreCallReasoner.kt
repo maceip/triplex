@@ -7,7 +7,11 @@ import com.google.mlkit.genai.prompt.ModelPreference
 import com.google.mlkit.genai.prompt.ModelReleaseStage
 import com.google.mlkit.genai.prompt.generationConfig
 import com.google.mlkit.genai.prompt.modelConfig
+import dev.triplex.dialogue.CallReasoner
+import dev.triplex.dialogue.SpokenReply
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -16,9 +20,13 @@ import javax.inject.Singleton
 /**
  * On-device call reasoner backed by Gemini Nano 4 Full via AICore / ML Kit
  * GenAI Prompt API (`ModelPreference.FULL`).
+ *
+ * The conversation this feeds lives in `dev.triplex.dialogue.CallDialogue`.
+ * This class does exactly two things: get one reply out of the model, and be
+ * honest when it cannot.
  */
 @Singleton
-class AiCoreCallReasoner @Inject constructor() {
+class AiCoreCallReasoner @Inject constructor() : CallReasoner {
     private val client: GenerativeModel by lazy {
         Generation.getClient(
             generationConfig {
@@ -30,42 +38,73 @@ class AiCoreCallReasoner @Inject constructor() {
         )
     }
 
-    suspend fun available(): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            when (val status = client.checkStatus()) {
-                FeatureStatus.AVAILABLE -> true
-                FeatureStatus.DOWNLOADABLE -> {
-                    Timber.i("Nano Full downloadable; starting download")
-                    client.download().collect { /* progress logged by AICore */ }
-                    client.checkStatus() == FeatureStatus.AVAILABLE
-                }
-                FeatureStatus.DOWNLOADING -> {
-                    Timber.i("Nano Full still downloading")
-                    false
-                }
-                else -> {
-                    Timber.w("Nano Full unavailable: %s", status)
-                    false
-                }
+    private val availabilityLock = Mutex()
+
+    /**
+     * Cached once the model is confirmed present.
+     *
+     * Only the positive result is cached, and only for the process. A status
+     * round-trip costs tens of milliseconds, which on a live call is dead air
+     * between the caller finishing a sentence and the agent starting one; a
+     * model that is present does not become absent mid-call, so asking twice
+     * buys nothing. A *negative* result is not cached — a download that
+     * finishes between two calls should be picked up.
+     */
+    @Volatile
+    private var confirmedAvailable = false
+
+    override suspend fun available(): Boolean {
+        if (confirmedAvailable) return true
+        return withContext(Dispatchers.IO) {
+            // Serialized so two calls arriving together do not both start the
+            // same multi-hundred-megabyte download.
+            availabilityLock.withLock {
+                if (confirmedAvailable) return@withLock true
+                val available = runCatching { resolveStatus() }
+                    .onFailure { Timber.w(it, "AICore Nano Full status check failed") }
+                    .getOrDefault(false)
+                confirmedAvailable = available
+                available
             }
-        }.onFailure {
-            Timber.w(it, "AICore Nano Full status check failed")
-        }.getOrDefault(false)
+        }
+    }
+
+    private suspend fun resolveStatus(): Boolean = when (val status = client.checkStatus()) {
+        FeatureStatus.AVAILABLE -> true
+        FeatureStatus.DOWNLOADABLE -> {
+            Timber.i("Nano Full downloadable; starting download")
+            client.download().collect { /* progress logged by AICore */ }
+            client.checkStatus() == FeatureStatus.AVAILABLE
+        }
+        FeatureStatus.DOWNLOADING -> {
+            Timber.i("Nano Full still downloading")
+            false
+        }
+        else -> {
+            Timber.w("Nano Full unavailable: %s", status)
+            false
+        }
     }
 
     /**
-     * Produces a short spoken reply for the live call. Fail-closed: throws if
-     * Nano is unavailable (this SKU is expected to have Gemini Nano 4 Full).
+     * Produces one spoken reply for the live call.
+     *
+     * Fail-closed by contract: this throws rather than returning filler, and
+     * what a call should do about that — ask the caller to repeat, or close
+     * honestly — is [dev.triplex.dialogue.FallbackPolicy]'s decision, not this
+     * class's. Model output goes through [SpokenReply] before it leaves here,
+     * so the markdown and stage directions Nano occasionally emits cannot reach
+     * the speech engine.
      */
-    suspend fun reply(
+    override suspend fun reply(
         systemInstructions: String,
         callerText: String,
-        history: List<Pair<String, String>> = emptyList(),
+        history: List<Pair<String, String>>,
     ): String = withContext(Dispatchers.IO) {
         check(available()) {
             "Gemini Nano 4 Full is not available on this device via AICore"
         }
-        val historyBlock = history.takeLast(6).joinToString("\n") { (role, text) ->
+        val historyBlock = history.takeLast(HISTORY_TURNS).joinToString("\n") { (role, text) ->
             "$role: $text"
         }
         val prompt = buildString {
@@ -85,8 +124,14 @@ class AiCoreCallReasoner @Inject constructor() {
             append("Your spoken reply:")
         }
         val response = client.generateContent(prompt)
-        val text = response.candidates.firstOrNull()?.text?.trim().orEmpty()
-        check(text.isNotBlank()) { "Nano returned an empty reply" }
-        text.lineSequence().first { it.isNotBlank() }.take(280)
+        val raw = response.candidates.firstOrNull()?.text.orEmpty()
+        checkNotNull(SpokenReply.sanitize(raw)) {
+            "Nano returned nothing speakable"
+        }
+    }
+
+    private companion object {
+        /** Matches the window `CallDialogue` keeps, so the prompt is not padded. */
+        const val HISTORY_TURNS = 6
     }
 }
