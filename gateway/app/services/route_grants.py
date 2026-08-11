@@ -103,7 +103,9 @@ def build_plivo_sip_uri(
     normalized_domain = provisioned_domain.lower().rstrip(".")
     if normalized_domain != allowed_domain.lower().rstrip("."):
         raise RouteGrantError("The provisioned SIP provider domain is unsupported")
-    return f"sips:{destination}@{normalized_domain}:5061;transport=tls"
+    # Plivo Direct endpoints register over UDP. Outbound INVITEs must match that
+    # transport — sips:5061 is rejected with 488 before the answer URL runs.
+    return f"sip:{destination}@{normalized_domain};transport=udp"
 
 
 class OutboundRouteService:

@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -17,10 +15,13 @@ import dev.triplex.ui.call.shared.TranscriptTimeline
 import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * `agent/run/{runId}` — one recorded call, in full (reskin.md §3.2).
@@ -35,7 +36,7 @@ fun RunDetailScreen(
     viewModel: RunDetailViewModel = hiltViewModel(),
 ) {
     val run by viewModel.run.collectAsState()
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -54,7 +55,7 @@ fun RunDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             val current = run
             if (current == null) {
@@ -62,11 +63,11 @@ fun RunDetailScreen(
                 // rather than showing an empty transcript as if it were one.
                 Text(
                     text = "This call is no longer on this device.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    variant = TextVariant.Large,
+                    color = RikkaTheme.colors.onMuted,
                     modifier = Modifier.padding(
-                        horizontal = spacing.screenHorizontal,
-                        vertical = spacing.large,
+                        horizontal = TriplexLayout.screenHorizontal,
+                        vertical = spacing.lg,
                     ),
                 )
                 return@Column
@@ -75,31 +76,28 @@ fun RunDetailScreen(
             TriplexCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = spacing.screenHorizontal),
+                    .padding(horizontal = TriplexLayout.screenHorizontal),
             ) {
                 Column(
-                    modifier = Modifier.padding(spacing.large),
-                    verticalArrangement = Arrangement.spacedBy(spacing.small),
+                    modifier = Modifier.padding(spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(spacing.sm),
                 ) {
                     TriplexStatusPill(
                         text = current.outcomeLabel(),
                         tone = current.outcomeTone(),
                     )
-                    Text(
-                        text = current.counterpartNumber,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    Text(text = current.counterpartNumber)
                     Text(
                         text = relativeTime(current.startedAtMs),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        variant = TextVariant.Small,
+                        color = RikkaTheme.colors.onMuted,
                     )
                     if (current.unfinished) {
                         Text(
                             text = "This call did not finish cleanly. Everything the " +
                                 "agent recorded before it stopped is below.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            variant = TextVariant.Small,
+                            color = RikkaTheme.colors.onMuted,
                         )
                     }
                 }

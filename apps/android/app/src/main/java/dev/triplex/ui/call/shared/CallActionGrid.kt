@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import dev.triplex.ui.components.call.TriplexCallActionTile
-import dev.triplex.ui.theme.TriplexDesign
 import zed.rainxch.rikkaicons.core.IconToken
 import zed.rainxch.rikkaicons.tokens.GitMerge
 import zed.rainxch.rikkaicons.tokens.Grid
@@ -20,17 +18,22 @@ import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaicons.tokens.Shuffle
 import zed.rainxch.rikkaicons.tokens.UserPlus
 import zed.rainxch.rikkaicons.tokens.VolumeHigh
+import zed.rainxch.rikkaui.components.ui.call.CallActionTile
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * A control on a live call's action grid.
  *
- * A tile the platform does not offer is **absent**, not disabled. These are
+ * A control the platform does not offer is **absent**, not disabled. These are
  * direct manipulations of a running call, and a greyed "Merge" on a call with
  * nothing to merge into explains nothing; the reasons a user actually needs
  * belong to the agent panel, which is where they are told what Triplex can and
  * cannot do for them.
+ *
+ * This is the description of a control, not its appearance — the design system's
+ * [CallActionTile] draws it.
  */
-data class CallActionTile(
+data class CallAction(
     val id: CallActionId,
     val label: String,
     /** True when the control is currently engaged — muted, on speaker, on hold. */
@@ -60,25 +63,25 @@ enum class CallActionId {
  */
 @Composable
 fun CallActionGrid(
-    tiles: List<CallActionTile>,
+    tiles: List<CallAction>,
     onAction: (CallActionId) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (tiles.isEmpty()) return
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(spacing.small),
+        verticalArrangement = Arrangement.spacedBy(spacing.sm),
     ) {
         tiles.chunked(TILES_PER_ROW).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(spacing.small),
+                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 row.forEach { tile ->
-                    TriplexCallActionTile(
+                    CallActionTile(
                         icon = tile.id.icon(),
                         label = tile.label,
                         active = tile.active,

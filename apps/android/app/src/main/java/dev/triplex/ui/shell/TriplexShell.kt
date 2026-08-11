@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +53,7 @@ import dev.triplex.ui.agent.InboundSetupScreen
 import dev.triplex.ui.agent.OutboundSetupScreen
 import dev.triplex.ui.agent.RunDetailScreen
 import dev.triplex.ui.agent.VoiceCloneScreen
-import dev.triplex.ui.call.incoming.IncomingCallSheetHost
+import dev.triplex.ui.call.incoming.IncomingCallSurfaceHost
 import dev.triplex.ui.components.TriplexBackground
 import dev.triplex.ui.enrollment.EnrollmentScreen
 import zed.rainxch.rikkaicons.core.IconToken
@@ -70,7 +71,7 @@ import zed.rainxch.rikkaui.components.ui.navigationbar.NavigationBarItemLayout
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
 import zed.rainxch.rikkaui.components.ui.scaffold.ScaffoldWindowInsets
 import zed.rainxch.rikkaui.foundation.RikkaTheme
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 
 /**
  * The single application shell.
@@ -138,7 +139,14 @@ private fun ShellScaffold(
     keypadContent: @Composable (onOpenAgent: () -> Unit) -> Unit,
 ) {
     val navController = rememberNavController()
-    val currentDestination = navController.currentBackStackEntryAsState().value?.destination
+    val currentEntry = navController.currentBackStackEntryAsState()
+
+    // The bar only needs to know which of the two tabs is lit, and a push inside
+    // the Agent graph does not change that. Deriving the index keeps the bar out
+    // of the recomposition every nested navigation would otherwise cause.
+    val selectedTabIndex by remember {
+        derivedStateOf { selectedTabIndexOf(currentEntry.value?.destination) }
+    }
 
     // A call must not be hidden behind a tab the user happens to be on.
     LaunchedEffect(callSurfaceActive) {
@@ -174,7 +182,7 @@ private fun ShellScaffold(
             bottomBar = {
                 if (hasBottomBar) {
                     ShellNavigationBar(
-                        currentDestination = currentDestination,
+                        selectedIndex = selectedTabIndex,
                         onSelect = navController::switchTab,
                         bottomInset = system.bottom,
                         backdrop = scenery,
@@ -199,7 +207,7 @@ private fun ShellScaffold(
                 // back stack, it cannot be popped, and it survives a tab switch
                 // and process death.
                 if (incomingCallActive) {
-                    IncomingCallSheetHost()
+                    IncomingCallSurfaceHost()
                 }
             }
         }
@@ -229,33 +237,33 @@ private fun ShellNavHost(
     keypadContent: @Composable (onOpenAgent: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val motion = TriplexDesign.motion
+    val motion = RikkaTheme.motion
 
     // Nested Agent pushes keep a short fade/slide; top-level Keypad ↔ Agent
     // tab switches stay instant so the glass pill alone carries the motion cue
     // (a second NavHost fade felt like lag on mid-range devices).
     val nestedEnter = {
-        fadeIn(tween(motion.standardMillis)) +
-            slideInHorizontally(tween(motion.standardMillis)) { width -> width / 10 }
+        fadeIn(tween(motion.durationSlow)) +
+            slideInHorizontally(tween(motion.durationSlow)) { width -> width / 10 }
     }
     val nestedExit = {
-        fadeOut(tween(motion.quickMillis)) +
-            slideOutHorizontally(tween(motion.standardMillis)) { width -> -width / 16 }
+        fadeOut(tween(motion.durationDefault)) +
+            slideOutHorizontally(tween(motion.durationSlow)) { width -> -width / 16 }
     }
     val nestedPopEnter = {
-        fadeIn(tween(motion.standardMillis)) +
+        fadeIn(tween(motion.durationSlow)) +
             scaleIn(
-                animationSpec = tween(motion.standardMillis),
-                initialScale = motion.navigationScale,
+                animationSpec = tween(motion.durationSlow),
+                initialScale = TriplexLayout.navigationScale,
             )
     }
     // Navigation Compose drives this transition interactively during the
     // system back gesture, revealing the destination underneath.
     val nestedPopExit = {
-        fadeOut(tween(motion.standardMillis)) +
+        fadeOut(tween(motion.durationSlow)) +
             scaleOut(
-                animationSpec = tween(motion.standardMillis),
-                targetScale = motion.navigationScale,
+                animationSpec = tween(motion.durationSlow),
+                targetScale = TriplexLayout.navigationScale,
                 transformOrigin = TransformOrigin.Center,
             )
     }
@@ -348,6 +356,9 @@ private fun ShellNavHost(
  * wallpaper. The glass variant also owns the selection marker, so switching tabs
  * slides one refracting pill across rather than swapping two static ones.
  *
+ * @param selectedIndex which tab is lit, as an index into [ShellTab.entries].
+ *   An index rather than a destination: the bar has no business walking a back
+ *   stack, and passing one made it recompose on every nested push.
  * @param bottomInset the gesture-bar inset. The panel floats above it rather
  *   than letting the system draw over the tabs.
  * @param backdrop what the panel refracts — the atmosphere combined with the
@@ -355,17 +366,12 @@ private fun ShellNavHost(
  */
 @Composable
 private fun ShellNavigationBar(
-    currentDestination: NavDestination?,
+    selectedIndex: Int,
     onSelect: (ShellRoute) -> Unit,
     bottomInset: Dp,
     backdrop: Backdrop,
 ) {
     val tabs = ShellTab.entries
-    val selectedIndex = tabs.indexOfFirst { tab ->
-        currentDestination?.hierarchy?.any { destination ->
-            destination.hasRoute(tab.graphRoute::class)
-        } == true
-    }.coerceAtLeast(0)
 
     // The selection marker is a single glass pill owned by the bar, not a
     // background on whichever item happens to be selected. That is what lets it
@@ -408,6 +414,18 @@ private fun ShellNavigationBar(
 
 /** Shorter than the design system's 80dp bar: the panel adds its own padding. */
 private val ShellNavigationBarHeight = 64.dp
+
+/**
+ * Which tab a destination belongs to.
+ *
+ * The whole hierarchy is walked rather than the leaf compared, because a nested
+ * Agent route is still the Agent tab; an unrecognised destination falls back to
+ * the first tab rather than lighting none.
+ */
+private fun selectedTabIndexOf(destination: NavDestination?): Int =
+    ShellTab.entries.indexOfFirst { tab ->
+        destination?.hierarchy?.any { it.hasRoute(tab.graphRoute::class) } == true
+    }.coerceAtLeast(0)
 
 /** The two shell sections. Recents and contacts live inside [Keypad]. */
 private enum class ShellTab(

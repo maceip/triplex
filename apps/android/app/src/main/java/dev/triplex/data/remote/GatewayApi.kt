@@ -121,7 +121,10 @@ data class OutboundRouteGrant(
 ) {
     init {
         require(header_name == "X-PH-TriplexGrant")
-        require(sip_uri.startsWith("sips:"))
+        require(
+            (sip_uri.startsWith("sip:") || sip_uri.startsWith("sips:")) &&
+                "phone.plivo.com" in sip_uri,
+        )
         require('\r' !in sip_uri && '\n' !in sip_uri)
         require(token.isNotBlank() && token.length <= 4_096)
         require('\r' !in token && '\n' !in token)

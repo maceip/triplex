@@ -24,6 +24,11 @@ import javax.inject.Singleton
  * The conversation this feeds lives in `dev.triplex.dialogue.CallDialogue`.
  * This class does exactly two things: get one reply out of the model, and be
  * honest when it cannot.
+ *
+ * AICore today is batch `generateContent`. Perceived TTFB is cut on the TTS
+ * side (Inflect clause streaming). If Nano becomes the bottleneck, the next
+ * harness is LiteRT-LM — not a separate llama.cpp stack — with token streaming
+ * into the same [SpokenReply] → [CallVoice] path.
  */
 @Singleton
 class AiCoreCallReasoner @Inject constructor() : CallReasoner {

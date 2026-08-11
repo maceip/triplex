@@ -30,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import zed.rainxch.rikkaicons.core.IconToken
@@ -51,8 +50,6 @@ import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBar
 import zed.rainxch.rikkaui.components.ui.topappbar.TopAppBarVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
-import dev.triplex.ui.theme.TriplexDesign
-import dev.triplex.ui.theme.triplexScenery
 import kotlinx.coroutines.delay
 
 enum class TriplexButtonStyle {
@@ -88,10 +85,12 @@ fun TriplexBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val isDark = RikkaTheme.colors.background.luminance() < 0.5f
+    // Scenery is installed by LiquidGlassTheme via RikkaTheme(scenery = …);
+    // reading it here keeps the shell and every glass surface on the same scene.
+    val scenery = RikkaTheme.scenery
     GlassContainer(
         modifier = modifier.fillMaxSize(),
-        background = { GlassScenery(scenery = triplexScenery(isDark)) },
+        background = { GlassScenery(scenery = scenery) },
     ) {
         content()
     }
@@ -105,7 +104,7 @@ fun TriplexReveal(
     content: @Composable () -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
-    val motion = TriplexDesign.motion
+    val motion = RikkaTheme.motion
     LaunchedEffect(Unit) {
         if (delayMillis > 0) delay(delayMillis.toLong())
         visible = true
@@ -113,9 +112,9 @@ fun TriplexReveal(
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
-        enter = fadeIn(tween(motion.standardMillis)) +
-            slideInVertically(tween(motion.standardMillis)) { it / 8 },
-        exit = fadeOut(tween(motion.quickMillis))
+        enter = fadeIn(tween(motion.durationSlow)) +
+            slideInVertically(tween(motion.durationSlow)) { it / 8 },
+        exit = fadeOut(tween(motion.durationDefault))
     ) {
         content()
     }
@@ -234,6 +233,10 @@ fun TriplexIconButton(
  * Content padding is zero because every existing call site pads its own content;
  * `GlassCard` would otherwise add `spacing.lg` on top of that.
  *
+ * @param level how far the card reads as sitting above what is behind it. Drop
+ *   to [GlassLevel.Subtle] for cards that repeat down a list: a directory row is
+ *   furniture *on* the screen, and a dozen Regular slabs stacked vertically read
+ *   as a pile of floating panels rather than as a list.
  * @param hostsGlass set this when the card contains glass of its own — dial keys,
  *   glass chips. The card then records what it drew, so the nested glass refracts
  *   *the card* instead of the scene far behind it, which is the difference
@@ -244,12 +247,13 @@ fun TriplexCard(
     modifier: Modifier = Modifier,
     tone: TriplexCardTone = TriplexCardTone.DEFAULT,
     onClick: (() -> Unit)? = null,
+    level: GlassLevel = GlassLevel.Regular,
     hostsGlass: Boolean = false,
     content: @Composable () -> Unit
 ) {
     GlassCard(
         modifier = modifier,
-        level = GlassLevel.Regular,
+        level = level,
         onClick = onClick,
         tint = tone.glassTint(),
         contentColor = RikkaTheme.colors.onSurface,

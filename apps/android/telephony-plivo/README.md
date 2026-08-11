@@ -1,10 +1,11 @@
-# Plivo direct-media spike
+# Plivo Direct media
 
-Status: implemented and host-verified; real Android/PSTN evidence is still
-required. This module is not production-ready.
+Status: wired into the app and proven on physical Android against live Plivo
+PSTN (UDP REGISTER, authorized outbound grant → `/answer` → CONFIRMED media).
+Still treat transport evidence as incomplete until the full
+`triplex.transport-call.v2` matrix in Required device proof is filled.
 
-PJSIP is the provisional first-spike adapter. PJSIP versus Linphone remains
-open until equivalent device and PSTN evidence supports a selection.
+PJSIP is the Direct adapter in use. A Linphone comparison remains optional.
 
 ## Boundary
 
@@ -32,10 +33,12 @@ the same port.
   short keepalives. Plivo Endpoint Dial targets the Contact host:port rather
   than reusing a TLS registration flow, so NATed TLS Contacts fail with
   Network Error; UDP Direct keeps a reachable mapping without a proxy.
-- SRTP is optional on Direct inbound (negotiate when offered); authorized
-  outbound grants still use `sips:` + TLS transport when present.
-- TLS 1.2/1.3 transport remains available for grant-based outbound dials
+- SRTP is disabled on Direct (plain RTP). Optional SRTP in the outbound INVITE
+  was rejected by Plivo with 488 before `/answer`. Authorized outbound grants
+  use `sip:…;transport=udp`; legacy `sips:` TLS still validates.
+- TLS 1.2/1.3 transport remains available for legacy grant-based TLS dials
   (server certificate verification on, caller-provided CA bundle required).
+- SDP advertises 20 ms G.711 packets (`ptime=20`) with PCMU/PCMA + telephone-event.
 - registration credentials are not persisted by this module. JNI copies them
   into bounded native storage and the Kotlin password byte array is zeroed.
 
@@ -94,12 +97,13 @@ For both direct PJSIP and the minimal relay comparison, capture one
 decision requires at least 20 calls per route and the comparator at
 `testlab/transport/compare.py`. Required evidence includes:
 
-- verified TLS protocol/cipher/certificate state and active SRTP;
+- UDP Direct registration + authorized outbound grant consumption on `/answer`;
 - non-silent caller PCM plus injected PCM and RTP in both directions;
 - callback-to-enqueue histogram, queue drops, sequence gaps, jitter, RTCP loss,
   and source RTP address;
 - caller-side probe latency and caller-audible interruption stop time;
 - Wi-Fi, LTE/5G, validated handoff, reconnect, DTMF, and hangup cases.
 
-No emulator, host syntax check, generated waveform, or executable APK is a
-substitute for this matrix.
+Plain RTP (SRTP disabled) is expected on Direct; do not require SRTP active for
+this route. No emulator, host syntax check, generated waveform, or executable
+APK is a substitute for this matrix.

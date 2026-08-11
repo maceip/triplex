@@ -33,6 +33,17 @@ class SodaCallTranscriber(context: Context) : AutoCloseable {
     private val _transcript = MutableStateFlow("")
     val transcript: StateFlow<String> = _transcript.asStateFlow()
 
+    /**
+     * Finalized (committed) transcript only — excludes the live partial tail.
+     * [finalSeq] bumps on each final so listeners can commit without waiting
+     * for partials to go quiet.
+     */
+    private val _committed = MutableStateFlow("")
+    val committed: StateFlow<String> = _committed.asStateFlow()
+
+    private val _finalSeq = MutableStateFlow(0)
+    val finalSeq: StateFlow<Int> = _finalSeq.asStateFlow()
+
     private val _status = MutableStateFlow("Preparing on-device speech recognition")
     val status: StateFlow<String> = _status.asStateFlow()
 
@@ -53,6 +64,8 @@ class SodaCallTranscriber(context: Context) : AutoCloseable {
         stopLocked()
         committedTranscript = ""
         _transcript.value = ""
+        _committed.value = ""
+        _finalSeq.value = 0
         if (!prepare()) return false
         return runCatching {
             val instance = Soda(appContext, TranscriptCallback())
@@ -144,6 +157,8 @@ class SodaCallTranscriber(context: Context) : AutoCloseable {
                     committedTranscript = listOf(committedTranscript, text)
                         .filter { it.isNotBlank() }
                         .joinToString(" ")
+                    _committed.value = committedTranscript
+                    _finalSeq.value = _finalSeq.value + 1
                     _transcript.value = committedTranscript
                 }
             } else if (recognition.hasPartialResult()) {

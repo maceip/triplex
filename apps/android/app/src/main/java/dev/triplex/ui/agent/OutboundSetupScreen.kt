@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,7 +32,7 @@ import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexToggleRow
 import dev.triplex.ui.components.TriplexTopBar
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.alertdialog.AlertDialog
@@ -43,6 +41,9 @@ import zed.rainxch.rikkaui.components.ui.alertdialog.AlertDialogCancel
 import zed.rainxch.rikkaui.components.ui.alertdialog.AlertDialogFooter
 import zed.rainxch.rikkaui.components.ui.alertdialog.AlertDialogHeader
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * `agent/outbound` — the calls the agent places for you (reskin.md §3.2).
@@ -57,7 +58,7 @@ fun OutboundSetupScreen(
     viewModel: OutboundSetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     LaunchedEffect(Unit) { viewModel.refreshVoiceReadiness() }
 
@@ -100,12 +101,12 @@ fun OutboundSetupScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
             contentPadding = PaddingValues(
-                start = spacing.screenHorizontal,
-                end = spacing.screenHorizontal,
-                top = spacing.large,
-                bottom = spacing.xxLarge,
+                start = TriplexLayout.screenHorizontal,
+                end = TriplexLayout.screenHorizontal,
+                top = spacing.lg,
+                bottom = spacing.xxl,
             ),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
             item { DefaultsCard(state = state, viewModel = viewModel, onOpenVoice = onOpenVoice) }
 
@@ -118,8 +119,7 @@ fun OutboundSetupScreen(
                     ) {
                         Text(
                             text = error,
-                            modifier = Modifier.padding(spacing.large),
-                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(spacing.lg),
                         )
                     }
                 }
@@ -139,8 +139,7 @@ fun OutboundSetupScreen(
                     TriplexCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             text = "No tasks yet. Create one below.",
-                            modifier = Modifier.padding(spacing.large),
-                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(spacing.lg),
                         )
                     }
                 }
@@ -166,11 +165,11 @@ private fun DefaultsCard(
     viewModel: OutboundSetupViewModel,
     onOpenVoice: () -> Unit,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             TriplexScreenHeader(
                 title = "Defaults",
@@ -182,7 +181,7 @@ private fun DefaultsCard(
                 onCheckedChange = viewModel::setConfirmBeforeDial,
                 supportingText = "Off: starting a task places the call immediately.",
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
                 TriplexChoiceChip(
                     label = "Triplex voice",
                     selected = state.config.defaultVoicePolicy == AutomationVoicePolicy.PRESET,
@@ -199,8 +198,8 @@ private fun DefaultsCard(
                 Text(
                     text = "Your cloned voice is not ready. Calls configured to use it " +
                         "will not be placed until it is.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
                 )
                 TriplexButton(
                     text = "Set up my voice",
@@ -219,29 +218,29 @@ private fun TaskRow(
     onCall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = modifier) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.small),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(taskTypeLabel(task.task_type), style = MaterialTheme.typography.titleMedium)
+                Text(text = taskTypeLabel(task.task_type), variant = TextVariant.H4)
                 TriplexStatusPill(
                     text = task.status.uppercase(),
                     tone = taskStatusTone(task.status),
                 )
             }
-            Text(task.destination_number, style = MaterialTheme.typography.bodyMedium)
+            Text(text = task.destination_number)
             task.outcome?.let { outcome ->
                 Text(
                     text = outcome,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
                 )
             }
             TriplexButton(
@@ -256,17 +255,17 @@ private fun TaskRow(
 
 @Composable
 private fun NewTaskCard(state: OutboundSetupState, viewModel: OutboundSetupViewModel) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
             TriplexScreenHeader(
                 title = "New task",
                 description = "Pick what the agent should accomplish.",
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
                 TaskType.entries.forEach { type ->
                     TriplexChoiceChip(
                         label = taskTypeLabel(type.name),
@@ -313,14 +312,14 @@ private fun TaskParameterInput(
     params: Map<String, String>,
     onParamChange: (String, String) -> Unit,
 ) {
-    val spacing = TriplexDesign.spacing
-    Column(verticalArrangement = Arrangement.spacedBy(spacing.large)) {
+    val spacing = RikkaTheme.spacing
+    Column(verticalArrangement = Arrangement.spacedBy(spacing.lg)) {
         when (type) {
             TaskType.ITEM_RETURN -> {
                 Text(
                     text = "Samsung Support - 1-800-SAMSUNG",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    variant = TextVariant.H4,
+                    color = RikkaTheme.colors.primary,
                 )
                 OutlinedTextInput(
                     label = "Item or model",

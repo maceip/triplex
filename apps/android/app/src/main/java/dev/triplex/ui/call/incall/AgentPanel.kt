@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +28,9 @@ import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexChoiceChip
 import dev.triplex.ui.components.TriplexStatusPill
-import dev.triplex.ui.theme.TriplexDesign
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * What Triplex can do on the call that is already running (reskin.md §3.4).
@@ -51,11 +51,11 @@ fun AgentPanel(
     onQuickReply: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(spacing.medium),
+        verticalArrangement = Arrangement.spacedBy(spacing.md),
     ) {
         TriplexStatusPill(
             text = state.status,
@@ -66,8 +66,7 @@ fun AgentPanel(
             TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.WARNING) {
                 Text(
                     text = notice,
-                    modifier = Modifier.padding(spacing.large),
-                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(spacing.lg),
                 )
             }
         }
@@ -94,8 +93,7 @@ private fun ColumnScope.TranscriptRegion(state: AgentPanelState) {
         Text(
             text = "Listening for why they are calling\u2026",
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = RikkaTheme.colors.onMuted,
             textAlign = TextAlign.Center,
         )
         return
@@ -117,7 +115,7 @@ private fun ColumnScope.QuickReplyRow(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.small),
+        horizontalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         replies.forEach { reply ->
@@ -165,7 +163,7 @@ private fun ColumnScope.HandOffControl(
     AnimatedVisibility(visible = expanded && handOff.enabled) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.small),
+            verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm),
         ) {
             state.automations.forEach { automation ->
                 TriplexButton(
@@ -202,7 +200,7 @@ private fun ColumnScope.DisabledReason(reason: String) {
         modifier = Modifier
             .fillMaxWidth()
             .semantics { contentDescription = "Unavailable: $reason" },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        variant = TextVariant.Small,
+        color = RikkaTheme.colors.onMuted,
     )
 }

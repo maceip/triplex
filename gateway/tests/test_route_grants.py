@@ -41,7 +41,7 @@ def test_e164_and_secure_plivo_route_are_strict():
     assert destination_from_plivo("sips:14155550123@phone.plivo.com") == "+14155550123"
     assert (
         build_plivo_sip_uri("+14155550123", "phone.plivo.com", "phone.plivo.com")
-        == "sips:14155550123@phone.plivo.com:5061;transport=tls"
+        == "sip:14155550123@phone.plivo.com;transport=udp"
     )
 
     for invalid in (
@@ -103,7 +103,7 @@ async def test_issue_binds_and_starts_one_typed_task():
     grant = await service.issue(user_id, task_id, "+1 (415) 555-0123")
 
     assert grant.task_id == task_id
-    assert grant.sip_uri.startswith("sips:14155550123@phone.plivo.com:5061")
+    assert grant.sip_uri.startswith("sip:14155550123@phone.plivo.com;transport=udp")
     assert grant.header_name == "X-PH-TriplexGrant"
     assert grant.token.isalnum()
     assert set(grant.token) <= set("0123456789abcdef")

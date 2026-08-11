@@ -311,7 +311,21 @@ class TelephonyController @Inject constructor(
                 }
             }
             SipEvent.Type.MEDIA_STATE -> {
-                if (event.status == MEDIA_ACTIVE_STATUS && activeCallId >= 0) {
+                // Native packs PJSUA media status in `code` and conf_connect
+                // pj_status in `status` (0 = both directions connected).
+                Timber.i(
+                    "SIP media state: call=%d mediaStatus=%d connectStatus=%d",
+                    event.callId,
+                    event.code,
+                    event.status,
+                )
+                if (event.code == MEDIA_ACTIVE_STATUS &&
+                    event.status == 0 &&
+                    (activeCallId >= 0 || event.callId >= 0)
+                ) {
+                    if (activeCallId < 0) {
+                        activeCallId = event.callId
+                    }
                     currentEpoch = runtime.getEpoch()
                     audioPipeline?.start(currentEpoch)
                     ensureAsrStarted()
@@ -331,6 +345,15 @@ class TelephonyController @Inject constructor(
                 } else if (event.code >= 300 || event.status != 0) {
                     scheduleTransportRecovery()
                 }
+            }
+            SipEvent.Type.CALL_STATE -> {
+                // pjsip_inv_state: 1=CALLING … 5=CONFIRMED 6=DISCONNECTED
+                Timber.i(
+                    "SIP call state: call=%d state=%d lastStatus=%d",
+                    event.callId,
+                    event.code,
+                    event.status,
+                )
             }
             SipEvent.Type.TRANSPORT_STATE -> {
                 Timber.i(
@@ -637,9 +660,20 @@ class TelephonyController @Inject constructor(
 
     private suspend fun awaitCallerReply(baseline: String): String? {
         val deadline = SystemClock.elapsedRealtime() + CALLER_REPLY_TIMEOUT_MS
+        val baselineFinalSeq = callTranscriber.finalSeq.value
+        val baselineCommitted = callTranscriber.committed.value
         var candidate = ""
         var changedAt = SystemClock.elapsedRealtime()
         while (activeCallId >= 0 && SystemClock.elapsedRealtime() < deadline) {
+            // Prefer SODA finals: no artificial settle once the utterance is committed.
+            val finalSeq = callTranscriber.finalSeq.value
+            if (finalSeq > baselineFinalSeq) {
+                val finalized = callTranscriber.committed.value
+                    .removePrefix(baselineCommitted)
+                    .trim()
+                if (finalized.isNotBlank()) return finalized
+            }
+
             val transcript = callTranscriber.transcript.value
             val delta = transcript.removePrefix(baseline).trim()
             if (delta != candidate) {
@@ -647,8 +681,10 @@ class TelephonyController @Inject constructor(
                 changedAt = SystemClock.elapsedRealtime()
             } else if (
                 candidate.isNotBlank() &&
-                SystemClock.elapsedRealtime() - changedAt >= CALLER_SETTLE_MS
+                SystemClock.elapsedRealtime() - changedAt >= CALLER_PARTIAL_SETTLE_MS
             ) {
+                // Partials that never finalize (noise, truncated end): shorter
+                // silence fallback than the old 1.2 s floor.
                 return candidate
             }
             delay(CALLER_POLL_MS)
@@ -829,8 +865,9 @@ class TelephonyController @Inject constructor(
         const val EVIDENCE_POLL_MS = 50L
         const val SIP_READY_TIMEOUT_MS = 20_000L
         const val CALLER_REPLY_TIMEOUT_MS = 45_000L
-        const val CALLER_SETTLE_MS = 1_200L
-        const val CALLER_POLL_MS = 150L
+        /** Silence after last partial change when SODA never emits a final. */
+        const val CALLER_PARTIAL_SETTLE_MS = 400L
+        const val CALLER_POLL_MS = 100L
         const val PLAYBACK_POLL_MS = 20L
         // Inflect renders mono 16-bit PCM at this rate; the SIP leg runs at the same rate.
         const val SYNTHESIS_SAMPLE_RATE = 16_000L

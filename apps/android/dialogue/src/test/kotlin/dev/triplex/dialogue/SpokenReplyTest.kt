@@ -168,4 +168,14 @@ class SpokenReplyTest {
         val raw = "Order SG-4471-2290, delivered on the 11th — is that right?"
         assertEquals(raw, SpokenReply.sanitize(raw))
     }
+
+    @Test
+    fun clauses_split_sanitized_replies_for_tts_streaming() {
+        assertEquals(
+            listOf("I can help with that.", "What is the order number?"),
+            SpokenReply.clauses("I can help with that. What is the order number?"),
+        )
+        assertEquals(listOf("Okay."), SpokenReply.clauses("Okay."))
+        assertEquals(emptyList(), SpokenReply.clauses("   "))
+    }
 }

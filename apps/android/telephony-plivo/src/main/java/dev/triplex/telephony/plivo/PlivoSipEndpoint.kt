@@ -44,8 +44,11 @@ data class AuthorizedSipRoute(
     init {
         require(taskId.isNotBlank())
         require(sipUri.length in 5..640)
-        require(sipUri.startsWith("sips:")) {
-            "Outbound route grants must require end-to-end secure signaling"
+        require(
+            (sipUri.startsWith("sip:") || sipUri.startsWith("sips:")) &&
+                "phone.plivo.com" in sipUri,
+        ) {
+            "Outbound route grants must target phone.plivo.com over sip or sips"
         }
         require('\r' !in sipUri && '\n' !in sipUri)
         require(headerName == OUTBOUND_GRANT_HEADER)

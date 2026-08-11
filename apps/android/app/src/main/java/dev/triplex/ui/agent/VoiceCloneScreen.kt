@@ -37,8 +37,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,7 +65,7 @@ import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexReveal
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import java.util.Locale
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.Mic
@@ -81,6 +79,8 @@ import zed.rainxch.rikkaui.components.ui.progress.ProgressAnimation
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
 import zed.rainxch.rikkaui.components.ui.separator.Separator
 import zed.rainxch.rikkaui.components.ui.spinner.Spinner
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /** Consent-first voice enrollment, preparation, preview, and revocation. */
@@ -130,7 +130,7 @@ internal fun VoiceCloneContent(
     onRevoke: () -> Unit
 ) {
     var leaveAfterDiscard by remember { mutableStateOf(false) }
-    val motion = TriplexDesign.motion
+    val motion = RikkaTheme.motion
 
     LaunchedEffect(leaveAfterDiscard, state.stage) {
         if (leaveAfterDiscard && state.stage != VoiceCloneStage.RECORDING) {
@@ -179,9 +179,9 @@ internal fun VoiceCloneContent(
                 .fillMaxSize()
                 .padding(padding),
             transitionSpec = {
-                (fadeIn(tween(motion.expressiveMillis)) +
+                (fadeIn(tween(motion.durationSlow)) +
                     scaleIn(initialScale = 0.985f)) togetherWith
-                    (fadeOut(tween(motion.quickMillis)) +
+                    (fadeOut(tween(motion.durationDefault)) +
                         scaleOut(targetScale = 0.99f))
             },
             label = "Voice enrollment mode"
@@ -283,8 +283,8 @@ private fun VoiceEnrollmentExperience(
     onStartCapture: () -> Unit,
     onFinishCapture: () -> Unit
 ) {
-    val spacing = TriplexDesign.spacing
-    val motion = TriplexDesign.motion
+    val spacing = RikkaTheme.spacing
+    val motion = RikkaTheme.motion
     val stage = when {
         state.stage == VoiceCloneStage.RECORDING -> EnrollmentUiStage.RECORDING
         state.stage == VoiceCloneStage.PREPARING -> EnrollmentUiStage.PREPARING
@@ -324,10 +324,10 @@ private fun VoiceEnrollmentExperience(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(scrollState)
-                    .padding(horizontal = spacing.screenHorizontal)
-                    .padding(top = spacing.medium, bottom = 168.dp),
+                    .padding(horizontal = TriplexLayout.screenHorizontal)
+                    .padding(top = spacing.md, bottom = 168.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(if (compact) spacing.large else spacing.xLarge)
+                verticalArrangement = Arrangement.spacedBy(if (compact) spacing.lg else spacing.xl)
             ) {
                 TriplexReveal {
                     VoiceEnrollmentProgress(currentIndex = progressIndex)
@@ -356,10 +356,10 @@ private fun VoiceEnrollmentExperience(
                 AnimatedContent(
                     targetState = stage,
                     transitionSpec = {
-                        (fadeIn(tween(motion.standardMillis)) +
-                            slideInVertically(tween(motion.standardMillis)) { it / 8 }) togetherWith
-                            (fadeOut(tween(motion.quickMillis)) +
-                                slideOutVertically(tween(motion.quickMillis)) { -it / 10 })
+                        (fadeIn(tween(motion.durationSlow)) +
+                            slideInVertically(tween(motion.durationSlow)) { it / 8 }) togetherWith
+                            (fadeOut(tween(motion.durationDefault)) +
+                                slideOutVertically(tween(motion.durationDefault)) { -it / 10 })
                     },
                     label = "Voice enrollment instruction"
                 ) { animatedStage ->
@@ -369,24 +369,23 @@ private fun VoiceEnrollmentExperience(
                     )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(spacing.small)
+                        verticalArrangement = Arrangement.spacedBy(spacing.sm)
                     ) {
                         Text(
                             text = animatedCopy.eyebrow,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            variant = TextVariant.Small,
+                            color = RikkaTheme.colors.primary,
                             textAlign = TextAlign.Center
                         )
                         Text(
                             text = animatedCopy.title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            variant = TextVariant.H2,
+                            color = RikkaTheme.colors.onBackground,
                             textAlign = TextAlign.Center
                         )
                         Text(
                             text = animatedCopy.description,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = RikkaTheme.colors.onMuted,
                             textAlign = TextAlign.Center
                         )
                         TriplexStatusPill(
@@ -402,10 +401,10 @@ private fun VoiceEnrollmentExperience(
                                 EnrollmentUiStage.CONSENT -> TriplexCardTone.DEFAULT
                             },
                             leadingColor = when (animatedStage) {
-                                EnrollmentUiStage.RECORDING -> MaterialTheme.colorScheme.secondary
-                                EnrollmentUiStage.PREPARING -> TriplexDesign.colors.warning
-                                EnrollmentUiStage.RETRY -> MaterialTheme.colorScheme.error
-                                EnrollmentUiStage.CONSENT -> MaterialTheme.colorScheme.primary
+                                EnrollmentUiStage.RECORDING -> RikkaTheme.colors.secondary
+                                EnrollmentUiStage.PREPARING -> RikkaTheme.colors.warning
+                                EnrollmentUiStage.RETRY -> RikkaTheme.colors.destructive
+                                EnrollmentUiStage.CONSENT -> RikkaTheme.colors.primary
                             }
                         )
                     }
@@ -414,8 +413,8 @@ private fun VoiceEnrollmentExperience(
                 AnimatedContent(
                     targetState = stage == EnrollmentUiStage.PREPARING,
                     transitionSpec = {
-                        fadeIn(tween(motion.standardMillis)) togetherWith
-                            fadeOut(tween(motion.quickMillis))
+                        fadeIn(tween(motion.durationSlow)) togetherWith
+                            fadeOut(tween(motion.durationDefault))
                     },
                     label = "Voice enrollment detail"
                 ) { preparing ->
@@ -437,8 +436,7 @@ private fun VoiceEnrollmentExperience(
                     ) {
                         Text(
                             text = error,
-                            modifier = Modifier.padding(spacing.large),
-                            style = MaterialTheme.typography.bodyMedium
+                            modifier = Modifier.padding(spacing.lg)
                         )
                     }
                 }
@@ -457,8 +455,7 @@ private fun VoiceEnrollmentExperience(
                     ) {
                         Text(
                             text = message,
-                            modifier = Modifier.padding(spacing.large),
-                            style = MaterialTheme.typography.bodyMedium
+                            modifier = Modifier.padding(spacing.lg)
                         )
                     }
                 }
@@ -478,16 +475,16 @@ private fun VoiceEnrollmentExperience(
 
 @Composable
 private fun CaptureQualityCard(seconds: Float, snrDb: Float?) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.small)
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
         ) {
             Text(
                 text = "ON-DEVICE QUALITY CHECK",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.primary
             )
             Text(
                 text = buildString {
@@ -496,8 +493,7 @@ private fun CaptureQualityCard(seconds: Float, snrDb: Float?) {
                         append(String.format(Locale.ROOT, " · %.0f dB signal-to-noise", it))
                     }
                 },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = RikkaTheme.colors.onMuted
             )
         }
     }
@@ -512,8 +508,8 @@ private fun VoiceEnrollmentActionBar(
     onFinishCapture: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val spacing = TriplexDesign.spacing
-    val background = MaterialTheme.colorScheme.background
+    val spacing = RikkaTheme.spacing
+    val background = RikkaTheme.colors.background
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -524,10 +520,10 @@ private fun VoiceEnrollmentActionBar(
                     endY = 150f
                 )
             )
-            .padding(horizontal = spacing.screenHorizontal)
-            .padding(top = spacing.xLarge, bottom = spacing.small),
+            .padding(horizontal = TriplexLayout.screenHorizontal)
+            .padding(top = spacing.xl, bottom = spacing.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(spacing.small)
+        verticalArrangement = Arrangement.spacedBy(spacing.sm)
     ) {
         when (stage) {
             EnrollmentUiStage.CONSENT,
@@ -556,8 +552,8 @@ private fun VoiceEnrollmentActionBar(
                 else ->
                     "Used only for your Triplex voice profile · Delete anytime"
             },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+            variant = TextVariant.Small,
+            color = RikkaTheme.colors.onMuted.copy(alpha = 0.78f),
             textAlign = TextAlign.Center
         )
     }
@@ -565,28 +561,28 @@ private fun VoiceEnrollmentActionBar(
 
 @Composable
 private fun VoicePreparingFooter() {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(spacing.large),
+                .padding(spacing.lg),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Spinner(label = "Preparing your voice")
-            Spacer(Modifier.width(spacing.medium))
-            Text("Preparing your voice", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(spacing.md))
+            Text(text = "Preparing your voice", variant = TextVariant.Large)
         }
     }
 }
 
 @Composable
 private fun VoiceEnrollmentProgress(currentIndex: Int) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(spacing.small)
+        horizontalArrangement = Arrangement.spacedBy(spacing.sm)
     ) {
         listOf("CONSENT", "VOICE", "READY").forEachIndexed { index, label ->
             VoiceProgressSegment(
@@ -607,18 +603,18 @@ private fun VoiceProgressSegment(
     modifier: Modifier = Modifier
 ) {
     val targetColor = when {
-        complete -> TriplexDesign.colors.success
-        active -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.outlineVariant
+        complete -> RikkaTheme.colors.success
+        active -> RikkaTheme.colors.primary
+        else -> RikkaTheme.colors.border
     }
     val color by animateColorAsState(
         targetValue = targetColor,
-        animationSpec = tween(TriplexDesign.motion.standardMillis),
+        animationSpec = tween(RikkaTheme.motion.durationSlow),
         label = "Voice progress segment"
     )
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.small)
+        verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm)
     ) {
         Box(
             modifier = Modifier
@@ -629,11 +625,11 @@ private fun VoiceProgressSegment(
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            variant = TextVariant.Small,
             color = if (active || complete) {
-                MaterialTheme.colorScheme.onBackground
+                RikkaTheme.colors.onBackground
             } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+                RikkaTheme.colors.onMuted.copy(alpha = 0.58f)
             }
         )
     }
@@ -645,14 +641,14 @@ private fun VoiceReadingCard(
     meter: VoiceCaptureMeter,
     promptProgress: VoicePromptProgress
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(
         modifier = Modifier.fillMaxWidth(),
         tone = if (recording) TriplexCardTone.ACCENT else TriplexCardTone.DEFAULT
     ) {
         Column(
-            modifier = Modifier.padding(spacing.xLarge),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium)
+            modifier = Modifier.padding(spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(spacing.md)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -661,18 +657,18 @@ private fun VoiceReadingCard(
             ) {
                 Text(
                     text = "READ THIS ALOUD",
-                    style = MaterialTheme.typography.labelSmall,
+                    variant = TextVariant.Small,
                     color = if (recording) {
-                        MaterialTheme.colorScheme.primary
+                        RikkaTheme.colors.primary
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        RikkaTheme.colors.onMuted
                     }
                 )
                 if (recording) {
                     TriplexStatusPill(
                         text = "LISTENING",
                         tone = TriplexCardTone.ACCENT,
-                        leadingColor = MaterialTheme.colorScheme.secondary
+                        leadingColor = RikkaTheme.colors.secondary
                     )
                 }
             }
@@ -682,11 +678,11 @@ private fun VoiceReadingCard(
                 amplitude = meter.amplitude
             )
             AnimatedVisibility(visible = recording) {
-                Column(verticalArrangement = Arrangement.spacedBy(spacing.small)) {
+                Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
                     Progress(
                         progress = promptProgress.overallProgress,
-                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f),
-                        fillColor = MaterialTheme.colorScheme.secondary,
+                        trackColor = RikkaTheme.colors.onSurface.copy(alpha = 0.12f),
+                        fillColor = RikkaTheme.colors.secondary,
                         height = 5.dp,
                         // The bar tracks the word the reader is on. Easing it in
                         // would put it behind the highlight it is meant to match.
@@ -698,14 +694,14 @@ private fun VoiceReadingCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "FOLLOW THE HIGHLIGHT",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
+                            text = "FOLLOW THE HIGHLIGHT",
+                            variant = TextVariant.Small,
+                            color = RikkaTheme.colors.onSurface.copy(alpha = 0.68f)
                         )
                         Text(
-                            "WORD ${promptProgress.activeWordIndex + 1} OF ${promptProgress.wordCount}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
+                            text = "WORD ${promptProgress.activeWordIndex + 1} OF ${promptProgress.wordCount}",
+                            variant = TextVariant.Small,
+                            color = RikkaTheme.colors.onSurface.copy(alpha = 0.68f)
                         )
                     }
                 }
@@ -729,13 +725,17 @@ private fun VoicePromptStatement(
         ),
         label = "Active voice word glow"
     )
-    val colors = MaterialTheme.colorScheme
+    val colors = RikkaTheme.colors
 
     if (!recording) {
+        // The italic rides a span rather than a `style` override: the design
+        // system's Text merges the variant style itself, so a TextStyle here
+        // would be a second place this screen decides its own typography.
         Text(
-            text = CONSENT_STATEMENT,
-            style = MaterialTheme.typography.bodyLarge,
-            fontStyle = FontStyle.Italic,
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(CONSENT_STATEMENT) }
+            },
+            variant = TextVariant.Large,
             color = colors.onSurface
         )
         return
@@ -752,7 +752,7 @@ private fun VoicePromptStatement(
         )
     ).merge(
         SpanStyle(
-            color = colors.onPrimaryContainer,
+            color = colors.onSurface,
             fontWeight = FontWeight.Bold
         )
     )
@@ -766,7 +766,7 @@ private fun VoicePromptStatement(
                 )
                 index == promptProgress.activeWordIndex -> activeHighlight
                 else -> SpanStyle(
-                    color = colors.onPrimaryContainer.copy(alpha = 0.43f)
+                    color = colors.onSurface.copy(alpha = 0.43f)
                 )
             }
             withStyle(style) { append(word) }
@@ -774,32 +774,32 @@ private fun VoicePromptStatement(
         }
     }
 
-    TranscriptText(text = prompt, color = colors.onPrimaryContainer)
+    TranscriptText(text = prompt, color = colors.onSurface)
 }
 
 @Composable
 private fun VoicePreparationCard() {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
         Column(
-            modifier = Modifier.padding(spacing.xLarge),
-            verticalArrangement = Arrangement.spacedBy(spacing.large)
+            modifier = Modifier.padding(spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg)
         ) {
-            Text("Preparing your voice", style = MaterialTheme.typography.titleLarge)
+            Text(text = "Preparing your voice", variant = TextVariant.H3)
             PreparationRow(
                 label = "Consent sample captured",
                 status = "DONE",
-                color = TriplexDesign.colors.success
+                color = RikkaTheme.colors.success
             )
             PreparationRow(
                 label = "Voice profile preparation",
                 status = "IN PROGRESS",
-                color = MaterialTheme.colorScheme.primary
+                color = RikkaTheme.colors.primary
             )
             PreparationRow(
                 label = "New-phrase preview",
                 status = "NEXT",
-                color = MaterialTheme.colorScheme.outlineVariant
+                color = RikkaTheme.colors.border
             )
         }
     }
@@ -809,7 +809,7 @@ private fun VoicePreparationCard() {
 private fun PreparationRow(label: String, status: String, color: Color) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.medium),
+        horizontalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -819,13 +819,12 @@ private fun PreparationRow(label: String, status: String, color: Color) {
         )
         Text(
             text = label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium
+            modifier = Modifier.weight(1f)
         )
         Text(
             text = status,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
+            variant = TextVariant.Small,
+            color = RikkaTheme.colors.onSurface.copy(alpha = 0.68f)
         )
     }
 }
@@ -839,8 +838,8 @@ private fun VoiceReadyExperience(
     onPlayReference: () -> Unit,
     onRevoke: () -> Unit
 ) {
-    val spacing = TriplexDesign.spacing
-    val motion = TriplexDesign.motion
+    val spacing = RikkaTheme.spacing
+    val motion = RikkaTheme.motion
     val orbState = when (state.stage) {
         VoiceCloneStage.SYNTHESIZING -> VoiceOrbState.Thinking
         VoiceCloneStage.PLAYING -> VoiceOrbState.Speaking
@@ -853,10 +852,10 @@ private fun VoiceReadyExperience(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = spacing.screenHorizontal)
-                .padding(top = spacing.medium, bottom = spacing.xxLarge),
+                .padding(horizontal = TriplexLayout.screenHorizontal)
+                .padding(top = spacing.md, bottom = spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (compact) spacing.large else spacing.xLarge)
+            verticalArrangement = Arrangement.spacedBy(if (compact) spacing.lg else spacing.xl)
         ) {
             VoiceEnrollmentProgress(currentIndex = 3)
 
@@ -873,14 +872,14 @@ private fun VoiceReadyExperience(
             AnimatedContent(
                 targetState = state.stage,
                 transitionSpec = {
-                    fadeIn(tween(motion.standardMillis)) togetherWith
-                        fadeOut(tween(motion.quickMillis))
+                    fadeIn(tween(motion.durationSlow)) togetherWith
+                        fadeOut(tween(motion.durationDefault))
                 },
                 label = "Voice ready headline"
             ) { stage ->
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(spacing.small)
+                    verticalArrangement = Arrangement.spacedBy(spacing.sm)
                 ) {
                     TriplexStatusPill(
                         text = when (stage) {
@@ -894,9 +893,9 @@ private fun VoiceReadyExperience(
                             TriplexCardTone.SUCCESS
                         },
                         leadingColor = if (stage == VoiceCloneStage.SYNTHESIZING) {
-                            TriplexDesign.colors.warning
+                            RikkaTheme.colors.warning
                         } else {
-                            TriplexDesign.colors.success
+                            RikkaTheme.colors.success
                         }
                     )
                     Text(
@@ -905,14 +904,13 @@ private fun VoiceReadyExperience(
                             VoiceCloneStage.PLAYING -> "Listen—this is your new voice."
                             else -> "Your voice is ready."
                         },
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        variant = TextVariant.H2,
+                        color = RikkaTheme.colors.onBackground,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = "Try a sentence you never recorded, then compare it with your original sample.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = RikkaTheme.colors.onMuted,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -920,10 +918,10 @@ private fun VoiceReadyExperience(
 
             TriplexCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier.padding(spacing.xLarge),
-                    verticalArrangement = Arrangement.spacedBy(spacing.large)
+                    modifier = Modifier.padding(spacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(spacing.lg)
                 ) {
-                    Text("Say something new", style = MaterialTheme.typography.titleLarge)
+                    Text(text = "Say something new", variant = TextVariant.H3)
                     OutlinedTextInput(
                         value = state.previewText,
                         onValueChange = onUpdatePreviewText,
@@ -961,7 +959,7 @@ private fun VoiceReadyExperience(
                     modifier = Modifier.fillMaxWidth(),
                     tone = TriplexCardTone.DANGER
                 ) {
-                    Text(error, modifier = Modifier.padding(spacing.large))
+                    Text(text = error, modifier = Modifier.padding(spacing.lg))
                 }
             }
             if (state.error != null && state.lastCaptureSeconds != null) {
@@ -975,11 +973,11 @@ private fun VoiceReadyExperience(
                     modifier = Modifier.fillMaxWidth(),
                     tone = TriplexCardTone.SUCCESS
                 ) {
-                    Text(message, modifier = Modifier.padding(spacing.large))
+                    Text(text = message, modifier = Modifier.padding(spacing.lg))
                 }
             }
 
-            Separator(color = TriplexDesign.colors.glassBorder)
+            Separator(color = RikkaTheme.colors.border)
 
             TriplexButton(
                 text = "Record a new sample",
@@ -1002,33 +1000,33 @@ private fun VoiceReadyExperience(
 
 @Composable
 private fun VoiceProfileDetails(state: VoiceCloneState) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium)
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Synthesis placement", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.width(spacing.medium))
+                Text(text = "Synthesis placement", variant = TextVariant.H4)
+                Spacer(Modifier.width(spacing.md))
                 TriplexStatusPill(text = state.placement, tone = TriplexCardTone.ACCENT)
             }
             if (state.placementReason.isNotBlank()) {
                 Text(
                     text = formatPlacementReason(state.placementReason),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onSurface.copy(alpha = 0.72f)
                 )
             }
             state.referenceSeconds?.let { seconds ->
                 Text(
                     text = "Consent reference · ${seconds}s",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onSurface.copy(alpha = 0.72f)
                 )
             }
             state.captureSnrDb?.takeIf { state.error == null }?.let { snrDb ->
@@ -1038,8 +1036,8 @@ private fun VoiceProfileDetails(state: VoiceCloneState) {
                         "On-device quality check · %.0f dB signal-to-noise",
                         snrDb
                     ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onSurface.copy(alpha = 0.72f)
                 )
             }
         }

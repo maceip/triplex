@@ -13,8 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,11 +29,14 @@ import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexReveal
 import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexStatusPill
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import zed.rainxch.rikkaicons.tokens.Phone
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.progress.Progress
 import zed.rainxch.rikkaui.components.ui.progress.ProgressAnimation
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 @Composable
 fun EnrollmentScreen(
@@ -43,7 +44,7 @@ fun EnrollmentScreen(
     viewModel: EnrollmentViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     LaunchedEffect(state.deviceReady) {
         if (state.deviceReady) onEnrollmentComplete()
@@ -53,9 +54,9 @@ fun EnrollmentScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = spacing.screenHorizontal)
-            .padding(top = spacing.xLarge, bottom = spacing.xxLarge),
-        verticalArrangement = Arrangement.spacedBy(spacing.xLarge)
+            .padding(horizontal = TriplexLayout.screenHorizontal)
+            .padding(top = spacing.xl, bottom = spacing.xxl),
+        verticalArrangement = Arrangement.spacedBy(spacing.xl)
     ) {
         TriplexReveal {
             TriplexStatusPill(
@@ -64,7 +65,7 @@ fun EnrollmentScreen(
             )
         }
 
-        TriplexReveal(delayMillis = TriplexDesign.motion.staggerMillis) {
+        TriplexReveal(delayMillis = TriplexLayout.staggerMillis) {
             TriplexScreenHeader(
                 eyebrow = "WELCOME TO TRIPLEX",
                 title = "Your voice agent starts here.",
@@ -72,17 +73,16 @@ fun EnrollmentScreen(
             )
         }
 
-        TriplexReveal(delayMillis = TriplexDesign.motion.staggerMillis * 2) {
+        TriplexReveal(delayMillis = TriplexLayout.staggerMillis * 2) {
             TriplexCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier.padding(spacing.xLarge),
-                    verticalArrangement = Arrangement.spacedBy(spacing.large)
+                    modifier = Modifier.padding(spacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(spacing.lg)
                 ) {
-                    Text("Secure setup", style = MaterialTheme.typography.titleLarge)
+                    Text("Secure setup", variant = TextVariant.H3)
                     Text(
                         "Your account links this device to its assigned number and encrypted local state.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = RikkaTheme.colors.onMuted
                     )
 
                     OutlinedTextInput(
@@ -109,8 +109,7 @@ fun EnrollmentScreen(
                         ) {
                             Text(
                                 text = error,
-                                modifier = Modifier.padding(spacing.large),
-                                style = MaterialTheme.typography.bodyMedium
+                                modifier = Modifier.padding(spacing.lg)
                             )
                         }
                     }
@@ -127,17 +126,17 @@ fun EnrollmentScreen(
             }
         }
 
-        TriplexReveal(delayMillis = TriplexDesign.motion.staggerMillis * 3) {
+        TriplexReveal(delayMillis = TriplexLayout.staggerMillis * 3) {
             SetupProgress(state = state)
         }
 
-        Spacer(Modifier.height(spacing.small))
+        Spacer(Modifier.height(spacing.sm))
     }
 }
 
 @Composable
 private fun SetupProgress(state: EnrollmentState) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     val target = when {
         state.user != null && state.deviceReady -> 1f
         state.user != null -> 0.66f
@@ -145,14 +144,14 @@ private fun SetupProgress(state: EnrollmentState) {
     }
     val progress by animateFloatAsState(
         targetValue = target,
-        animationSpec = tween(TriplexDesign.motion.expressiveMillis),
+        animationSpec = tween(RikkaTheme.motion.durationSlow),
         label = "Enrollment progress"
     )
 
     TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium)
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -164,8 +163,8 @@ private fun SetupProgress(state: EnrollmentState) {
             }
             Progress(
                 progress = progress,
-                trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f),
-                fillColor = MaterialTheme.colorScheme.primary,
+                trackColor = RikkaTheme.colors.border,
+                fillColor = RikkaTheme.colors.primary,
                 height = 6.dp,
                 // The value handed in is already tweened above; a second spring
                 // on top of it would drag the bar behind the step labels.
@@ -179,11 +178,7 @@ private fun SetupProgress(state: EnrollmentState) {
 private fun SetupLabel(label: String, complete: Boolean) {
     Text(
         text = label,
-        style = MaterialTheme.typography.labelMedium,
-        color = if (complete) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.55f)
-        }
+        variant = TextVariant.Small,
+        color = if (complete) RikkaTheme.colors.primary else RikkaTheme.colors.onMuted
     )
 }

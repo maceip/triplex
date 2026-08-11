@@ -13,7 +13,7 @@ import dev.triplex.domain.call.AudioEndpointUi
 import dev.triplex.ui.components.TriplexChoiceChip
 import zed.rainxch.rikkaui.components.ui.text.Text
 import zed.rainxch.rikkaui.components.ui.text.TextVariant
-import dev.triplex.ui.theme.TriplexDesign
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * Where the call's audio comes out.
@@ -33,18 +33,18 @@ fun AudioRoutePicker(
     modifier: Modifier = Modifier,
 ) {
     if (endpoints.size < 2) return
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(spacing.xSmall),
+        verticalArrangement = Arrangement.spacedBy(spacing.xs),
     ) {
         Text(text = "Audio", variant = TextVariant.Small)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(spacing.small),
+            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             endpoints.forEach { endpoint ->

@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,10 +28,13 @@ import dev.triplex.ui.components.TriplexChoiceChip
 import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexToggleRow
 import dev.triplex.ui.components.TriplexTopBar
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * `agent/inbound` — how the agent handles calls that come to you (reskin.md §3.2).
@@ -45,7 +46,7 @@ fun InboundSetupScreen(
     viewModel: InboundSetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     // Re-check on entry: the clone may have become ready since the last visit.
     LaunchedEffect(Unit) { viewModel.refreshVoiceReadiness() }
@@ -68,12 +69,12 @@ fun InboundSetupScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
             contentPadding = PaddingValues(
-                start = spacing.screenHorizontal,
-                end = spacing.screenHorizontal,
-                top = spacing.large,
-                bottom = spacing.xxLarge,
+                start = TriplexLayout.screenHorizontal,
+                end = TriplexLayout.screenHorizontal,
+                top = spacing.lg,
+                bottom = spacing.xxl,
             ),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
             item { AnsweringCard(state = state, viewModel = viewModel) }
             item { GreetingCard(state = state, viewModel = viewModel) }
@@ -87,9 +88,9 @@ fun InboundSetupScreen(
 
 @Composable
 private fun AnsweringCard(state: InboundSetupState, viewModel: InboundSetupViewModel) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(spacing.large)) {
+        Column(modifier = Modifier.padding(spacing.lg)) {
             TriplexToggleRow(
                 title = "Agent answers all calls",
                 checked = state.config.autoAnswerAll,
@@ -103,7 +104,7 @@ private fun AnsweringCard(state: InboundSetupState, viewModel: InboundSetupViewM
 
 @Composable
 private fun GreetingCard(state: InboundSetupState, viewModel: InboundSetupViewModel) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     // The field is edited locally and committed on Save so a half-typed greeting
     // never becomes what the agent says on the next call.
     var draft by remember(state.config.greetingText) {
@@ -111,8 +112,8 @@ private fun GreetingCard(state: InboundSetupState, viewModel: InboundSetupViewMo
     }
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             TriplexScreenHeader(
                 title = "Greeting",
@@ -126,7 +127,7 @@ private fun GreetingCard(state: InboundSetupState, viewModel: InboundSetupViewMo
                 singleLine = false,
                 minLines = 3,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(spacing.medium)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing.md)) {
                 TriplexButton(
                     text = "Save",
                     onClick = { viewModel.setGreetingText(draft) },
@@ -148,17 +149,17 @@ private fun VoiceCard(
     viewModel: InboundSetupViewModel,
     onOpenVoice: () -> Unit,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             TriplexScreenHeader(
                 title = "Voice",
                 description = "Which voice the agent speaks with on incoming calls.",
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(spacing.small)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
                 TriplexChoiceChip(
                     label = "Triplex voice",
                     selected = state.config.voicePolicy == AutomationVoicePolicy.PRESET,
@@ -176,8 +177,8 @@ private fun VoiceCard(
             if (!state.clonedVoiceReady) {
                 Text(
                     text = "Your cloned voice is not ready yet.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
                 )
                 TriplexButton(
                     text = "Set up my voice",
@@ -188,8 +189,8 @@ private fun VoiceCard(
             state.voiceError?.let { error ->
                 Text(
                     text = error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.destructive,
                 )
             }
         }
@@ -198,11 +199,11 @@ private fun VoiceCard(
 
 @Composable
 private fun AutomationsCard(state: InboundSetupState, viewModel: InboundSetupViewModel) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
             TriplexScreenHeader(
                 title = "Automations",
@@ -223,12 +224,12 @@ private fun AutomationsCard(state: InboundSetupState, viewModel: InboundSetupVie
 
 @Composable
 private fun QuickRepliesCard(state: InboundSetupState, viewModel: InboundSetupViewModel) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     var draft by remember { mutableStateOf("") }
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.medium),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             TriplexScreenHeader(
                 title = "Quick replies",
@@ -238,11 +239,10 @@ private fun QuickRepliesCard(state: InboundSetupState, viewModel: InboundSetupVi
             state.config.quickReplies.forEach { reply ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(spacing.medium),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.md),
                 ) {
                     Text(
                         text = reply,
-                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
                     TriplexButton(
@@ -281,23 +281,21 @@ private fun QuickRepliesCard(state: InboundSetupState, viewModel: InboundSetupVi
  */
 @Composable
 private fun RoutingExplainerCard() {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.WARNING) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.small),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
-            Text("Which calls the agent can answer", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Which calls the agent can answer", variant = TextVariant.H4)
             Text(
                 text = "Being your default phone app lets Triplex see calls on your SIM — " +
                     "who is calling, and when — but Android gives a phone app no access to " +
                     "the call's audio. On a SIM call the agent can neither listen nor speak.",
-                style = MaterialTheme.typography.bodyMedium,
             )
             Text(
                 text = "The agent works on the Triplex line, which carries its own audio. " +
                     "Two ways to get calls there:",
-                style = MaterialTheme.typography.bodyMedium,
             )
             Text(
                 text = "1. Give out your Triplex number. Calls to it reach the agent directly.\n" +
@@ -305,12 +303,11 @@ private fun RoutingExplainerCard() {
                     "set conditional forwarding — when busy, unanswered, or unreachable — to " +
                     "your Triplex number. Your SIM rings first; anything you do not pick up " +
                     "lands on the agent.",
-                style = MaterialTheme.typography.bodyMedium,
             )
             Text(
                 text = "Forwarding is a carrier feature and may be billed as a call.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
             )
         }
     }

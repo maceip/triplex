@@ -8,7 +8,7 @@ class AuthorizedSipRouteTest {
     fun acceptsOnlyTheLockedGrantHeader() {
         val route = AuthorizedSipRoute(
             taskId = "task-1",
-            sipUri = "sips:14155550123@phone.plivo.com:5061;transport=tls",
+            sipUri = "sip:14155550123@phone.plivo.com;transport=udp",
             headerName = "X-PH-TriplexGrant",
             headerValue = "header.payload.signature",
             expiresAtElapsedRealtimeNs = Long.MAX_VALUE,
@@ -21,7 +21,7 @@ class AuthorizedSipRouteTest {
     fun rejectsAHeaderNameChosenByTheCaller() {
         AuthorizedSipRoute(
             taskId = "task-1",
-            sipUri = "sips:14155550123@phone.plivo.com:5061;transport=tls",
+            sipUri = "sip:14155550123@phone.plivo.com;transport=udp",
             headerName = "Authorization",
             headerValue = "header.payload.signature",
             expiresAtElapsedRealtimeNs = Long.MAX_VALUE,
@@ -32,7 +32,7 @@ class AuthorizedSipRouteTest {
     fun rejectsHeaderValueInjection() {
         AuthorizedSipRoute(
             taskId = "task-1",
-            sipUri = "sips:14155550123@phone.plivo.com:5061;transport=tls",
+            sipUri = "sip:14155550123@phone.plivo.com;transport=udp",
             headerName = "X-PH-TriplexGrant",
             headerValue = "header.payload.signature\r\nX-Evil: injected",
             expiresAtElapsedRealtimeNs = Long.MAX_VALUE,

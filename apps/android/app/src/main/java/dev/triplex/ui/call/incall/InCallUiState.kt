@@ -11,7 +11,7 @@ import dev.triplex.domain.model.AutomationCatalog
 import dev.triplex.domain.model.AutomationTemplate
 import dev.triplex.ui.call.shared.AGENT_ONLY_AUDIO_NOTICE
 import dev.triplex.ui.call.shared.CallActionId
-import dev.triplex.ui.call.shared.CallActionTile
+import dev.triplex.ui.call.shared.CallAction
 
 /**
  * Everything the in-call surface draws, derived from one [CallSession].
@@ -38,7 +38,7 @@ data class InCallUiState(
     val statusMessage: String = "",
     /** When the leg connected, for the elapsed clock. Null means no clock. */
     val connectedAtMs: Long? = null,
-    val actions: List<CallActionTile> = emptyList(),
+    val actions: List<CallAction> = emptyList(),
     /**
      * Audio outputs, when the platform offers a choice. Empty means the picker
      * is not drawn at all — there is nothing to pick between.
@@ -46,7 +46,7 @@ data class InCallUiState(
     val audioEndpoints: List<AudioEndpointUi> = emptyList(),
     val agent: AgentPanelState = AgentPanelState(),
 ) {
-    fun tile(id: CallActionId): CallActionTile? = actions.firstOrNull { it.id == id }
+    fun tile(id: CallActionId): CallAction? = actions.firstOrNull { it.id == id }
 }
 
 /**
@@ -135,7 +135,7 @@ fun inCallUiState(
 private fun CallSession.isInCallSurface(): Boolean =
     phase != CallPhase.RINGING && phase != CallPhase.SCREENING
 
-private fun buildTiles(session: CallSession): List<CallActionTile> {
+private fun buildTiles(session: CallSession): List<CallAction> {
     val capabilities = session.capabilities
     return buildList {
         // Mute and speaker ride on canMute for the same reason the repository
@@ -143,14 +143,14 @@ private fun buildTiles(session: CallSession): List<CallActionTile> {
         // leg this phone carries no audio for has neither.
         if (capabilities.canMute) {
             add(
-                CallActionTile(
+                CallAction(
                     id = CallActionId.MUTE,
                     label = if (session.isMuted) "Unmute" else "Mute",
                     active = session.isMuted,
                 )
             )
             add(
-                CallActionTile(
+                CallAction(
                     id = CallActionId.SPEAKER,
                     label = "Speaker",
                     active = session.isSpeakerOn,
@@ -159,7 +159,7 @@ private fun buildTiles(session: CallSession): List<CallActionTile> {
         }
         if (capabilities.canHold) {
             add(
-                CallActionTile(
+                CallAction(
                     id = CallActionId.HOLD,
                     label = if (session.phase == CallPhase.HOLDING) "Resume" else "Hold",
                     active = session.phase == CallPhase.HOLDING,
@@ -167,19 +167,19 @@ private fun buildTiles(session: CallSession): List<CallActionTile> {
             )
         }
         if (capabilities.canAddCall) {
-            add(CallActionTile(id = CallActionId.ADD_CALL, label = "Add call"))
+            add(CallAction(id = CallActionId.ADD_CALL, label = "Add call"))
         }
         if (capabilities.canSwitch) {
-            add(CallActionTile(id = CallActionId.SWITCH, label = "Switch"))
+            add(CallAction(id = CallActionId.SWITCH, label = "Switch"))
         }
         if (capabilities.canMerge) {
-            add(CallActionTile(id = CallActionId.MERGE, label = "Merge"))
+            add(CallAction(id = CallActionId.MERGE, label = "Merge"))
         }
         if (capabilities.canSwap) {
-            add(CallActionTile(id = CallActionId.SWAP, label = "Swap"))
+            add(CallAction(id = CallActionId.SWAP, label = "Swap"))
         }
         if (capabilities.canSendDtmf) {
-            add(CallActionTile(id = CallActionId.KEYPAD, label = "Keypad"))
+            add(CallAction(id = CallActionId.KEYPAD, label = "Keypad"))
         }
     }
 }

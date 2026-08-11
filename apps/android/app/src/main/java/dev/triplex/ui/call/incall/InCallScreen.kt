@@ -23,12 +23,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import dev.triplex.ui.call.shared.AudioRoutePicker
 import dev.triplex.ui.call.shared.CallActionGrid
 import dev.triplex.ui.call.shared.CallActionId
-import dev.triplex.ui.call.shared.DtmfPad
 import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
-import dev.triplex.ui.components.call.TriplexCallHeader
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import kotlinx.coroutines.delay
+import zed.rainxch.rikkaui.components.ui.call.CallHeader
+import zed.rainxch.rikkaui.components.ui.call.GlassDialpad
+import zed.rainxch.rikkaui.components.ui.call.GlassDialpadDefaults
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * The connected call (reskin.md §3.4).
@@ -80,7 +82,7 @@ fun InCallScreen(
     modifier: Modifier = Modifier,
 ) {
     if (!state.visible) return
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
 
     // The pad is a disclosure on top of the grid rather than a mode, so it
     // survives configuration change and closes when the call does.
@@ -90,11 +92,11 @@ fun InCallScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = spacing.screenHorizontal, vertical = spacing.large),
-        verticalArrangement = Arrangement.spacedBy(spacing.large),
+            .padding(horizontal = TriplexLayout.screenHorizontal, vertical = spacing.lg),
+        verticalArrangement = Arrangement.spacedBy(spacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        TriplexCallHeader(
+        CallHeader(
             callerName = state.displayName,
             callerNumber = state.number,
             statusLine = state.statusLabel,
@@ -116,8 +118,15 @@ fun InCallScreen(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // The design system's pad with the tone key set: no letters, because
+        // nobody spells a name into a live line, and no long-press `+`, because
+        // `+` is not a tone.
         AnimatedVisibility(visible = showKeypad) {
-            DtmfPad(onDigit = onDtmf, modifier = Modifier.fillMaxWidth())
+            GlassDialpad(
+                onKeyPress = onDtmf,
+                keys = GlassDialpadDefaults.ToneKeys,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         AgentPanel(

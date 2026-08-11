@@ -67,8 +67,16 @@ class Qwen3TtsEngine(private val dir: File) {
         private const val XNNPACK_FORCE_FP16 = 4
         const val SAMPLE_RATE = 24000
         const val MAX_FRAMES = 512
-        /** Emit PCM to the streaming sink about every 64 codec frames (~5.1 s @ 12.5 Hz). */
-        const val STREAM_EMIT_FRAMES = 64
+        /**
+         * Emit PCM to the streaming sink about every 12 codec frames
+         * (~0.96 s @ 12.5 Hz). Kept well under [CODEC_CHUNK] so first audio
+         * is audible without waiting for a full 64-frame codec window.
+         */
+        const val STREAM_EMIT_FRAMES = 12
+        /** Cap XNNPACK threads so talker+mtp+codec don't thrash SODA/Nano/SIP. */
+        private const val INFERENCE_THREADS = 2
+        private const val TOP_K = 50
+        private const val EMB_IN = 2048
 
         // <|im_start|>assistant\n   and   <|im_end|>\n<|im_start|>assistant\n
         private val PROMPT_PREFIX = intArrayOf(151644, 77091, 198)
@@ -111,10 +119,23 @@ class Qwen3TtsEngine(private val dir: File) {
         return CompiledModel.create(f.absolutePath, options, null)
     }
 
-    private val talker = load("talker_int4.tflite", 4)
-    private val mtp = load("mtp_folded_int8.tflite", 4)
-    private val codecA = load("codec_partA.tflite", 4)
-    private val codecB = load("codec_partB.tflite", 4, XNNPACK_FORCE_FP16)
+    private val talker = load("talker_int4.tflite", INFERENCE_THREADS)
+    private val mtp = load("mtp_folded_int8.tflite", INFERENCE_THREADS)
+    private val codecA = load("codec_partA.tflite", INFERENCE_THREADS)
+    private val codecB = load("codec_partB.tflite", INFERENCE_THREADS, XNNPACK_FORCE_FP16)
+
+    // Reused codec I/O across streaming emits (avoid alloc/close per chunk).
+    private val codecAIn = codecA.createInputBuffers()
+    private val codecAOut = codecA.createOutputBuffers()
+    private val codecBOut = codecB.createOutputBuffers()
+    private val codecCodesBuf = IntArray(16 * CODEC_CHUNK)
+
+    // Reused projection workspace for embedText (2048→1024 SiLU MLP).
+    private val embX = FloatArray(EMB_IN)
+    private val embH = FloatArray(EMB_IN)
+    private val topKIdx = IntArray(TOP_K)
+    private val topKVal = FloatArray(TOP_K)
+    private val topKProbs = DoubleArray(TOP_K)
 
     private val kvNames = (0 until 28).flatMap {
         listOf("kv_cache_k_$it", "kv_cache_v_$it")
@@ -139,8 +160,9 @@ class Qwen3TtsEngine(private val dir: File) {
      * With [greedy], generation is deterministic. Otherwise the talker uses
      * top-50 sampling and folded MTP uses temperature-0.9 Gumbel sampling.
      *
-     * When [pcmSink] is non-null, codec decode runs every [CODEC_CHUNK] frames
-     * and PCM is delivered incrementally (streaming path).
+     * When [pcmSink] is non-null, codec decode runs every [STREAM_EMIT_FRAMES]
+     * new frames (with [CODEC_CTX] left context only) and PCM is delivered
+     * incrementally.
      */
     fun synthesize(
         text: String, language: String = "english",
@@ -277,20 +299,50 @@ class Qwen3TtsEngine(private val dir: File) {
             talkerNs / 1_000_000, mtpNs / 1_000_000, codecNs / 1_000_000)
     }
 
-    /** Decode frames[from, to) with left context from earlier frames. */
+    /**
+     * Decode frames[[from], [to]) with [CODEC_CTX] left context only.
+     *
+     * Streaming used to re-decode frames[0..to) and discard the prefix
+     * (quadratic in utterance length). This matches the non-streaming window
+     * loop: one codec pass per new span.
+     */
     private fun decodeCodesRange(
         frames: List<IntArray>,
         from: Int,
         to: Int,
     ): FloatArray {
         if (from >= to) return FloatArray(0)
-        // Reuse full decoder but only keep the newly generated samples.
-        val full = decodeCodes(frames.subList(0, to))
-        // Approximate: decodeCodes already strips left context per chunk.
-        // For streaming we re-decode the prefix window; trim previously emitted
-        // samples by counting UPSAMPLE * from.
-        val skip = from * UPSAMPLE
-        return if (skip >= full.size) FloatArray(0) else full.copyOfRange(skip, full.size)
+        val pieces = ArrayList<FloatArray>((to - from + CODEC_CHUNK - 1) / CODEC_CHUNK)
+        var i = from
+        while (i < to) {
+            val ctx = min(CODEC_CTX, i)
+            // Window = left context + new frames must fit the fixed-T graph.
+            val j = min(i + CODEC_CHUNK - ctx, to)
+            val n = j - (i - ctx) // = new frames + ctx, always <= CODEC_CHUNK
+            codecCodesBuf.fill(0)
+            for (t in 0 until n) {
+                val frame = frames[i - ctx + t]
+                for (q in 0 until 16) {
+                    codecCodesBuf[q * CODEC_CHUNK + t] = frame[q]
+                }
+            }
+            codecAIn[0].writeInt(codecCodesBuf)
+            codecA.run(codecAIn, codecAOut)
+            codecB.run(listOf(codecAOut[0]), codecBOut)
+            val wav = codecBOut[0].readFloat()
+            pieces.add(wav.copyOfRange(ctx * UPSAMPLE, n * UPSAMPLE))
+            i = j
+        }
+        if (pieces.size == 1) return pieces[0]
+        var total = 0
+        for (p in pieces) total += p.size
+        val out = FloatArray(total)
+        var off = 0
+        for (p in pieces) {
+            System.arraycopy(p, 0, out, off, p.size)
+            off += p.size
+        }
+        return out
     }
 
     // ------------------------------------------------------------------
@@ -308,6 +360,13 @@ class Qwen3TtsEngine(private val dir: File) {
         val maskIn = talker.createInputBuffer("mask", "decode")
         val logitsOut = talker.createOutputBuffer("logits", "decode")
         val mask = FloatArray(CACHE) { NEG }
+        // Reused every decode step — no HashMap alloc on the AR hot path.
+        private val decodeInputs = HashMap<String, TensorBuffer>(64)
+        private val decodeOutputs = HashMap<String, TensorBuffer>(64)
+        private val logitsScratch = FloatArray(CODEC_VOCAB)
+        private val hiddenScratch = FloatArray(HIDDEN)
+        private val posScratch = IntArray(1)
+        val step = Step(logitsScratch, hiddenScratch)
 
         fun prefill(embeds: Array<FloatArray>) {
             val p = embeds.size
@@ -344,31 +403,32 @@ class Qwen3TtsEngine(private val dir: File) {
 
         fun decode(embed: FloatArray, pos: Int): Step {
             embIn.writeFloat(embed)
-            posIn.writeInt(intArrayOf(pos))
+            posScratch[0] = pos
+            posIn.writeInt(posScratch)
             mask.fill(NEG)
             for (c in 0..pos) {
                 mask[c] = 0f
             }
             maskIn.writeFloat(mask)
             val next = if (current === setA) setB else setA
-            val inputs = HashMap<String, TensorBuffer>(64)
-            inputs["embeddings"] = embIn
-            inputs["input_pos"] = posIn
-            inputs["mask"] = maskIn
+            decodeInputs.clear()
+            decodeInputs["embeddings"] = embIn
+            decodeInputs["input_pos"] = posIn
+            decodeInputs["mask"] = maskIn
             for (name in kvNames) {
-                inputs[name] = current.getValue(name)
+                decodeInputs[name] = current.getValue(name)
             }
-            val outputs = HashMap<String, TensorBuffer>(64)
-            outputs["logits"] = logitsOut
+            decodeOutputs.clear()
+            decodeOutputs["logits"] = logitsOut
             for (name in kvNames) {
-                outputs[name] = next.getValue(name)
+                decodeOutputs[name] = next.getValue(name)
             }
-            talker.run(inputs, outputs, "decode")
+            talker.run(decodeInputs, decodeOutputs, "decode")
             current = next
             val logits = logitsOut.readFloat() // [4096] = codec logits | hidden
-            return Step(
-                logits.copyOfRange(0, CODEC_VOCAB),
-                logits.copyOfRange(CODEC_VOCAB, CODEC_VOCAB + HIDDEN))
+            System.arraycopy(logits, 0, logitsScratch, 0, CODEC_VOCAB)
+            System.arraycopy(logits, CODEC_VOCAB, hiddenScratch, 0, HIDDEN)
+            return step
         }
     }
 
@@ -403,48 +463,8 @@ class Qwen3TtsEngine(private val dir: File) {
     // ------------------------------------------------------------------
     // Codec decode: fixed 64-frame chunks, 25 frames of left context.
     // ------------------------------------------------------------------
-    private fun decodeCodes(frames: List<IntArray>): FloatArray {
-        if (frames.isEmpty()) return FloatArray(0)
-        val codecAIn = codecA.createInputBuffers()
-        val codecAOut = codecA.createOutputBuffers()
-        val codecBOut = codecB.createOutputBuffers()
-        val pieces = ArrayList<FloatArray>()
-        var i = 0
-        while (i < frames.size) {
-            val ctx = min(CODEC_CTX, i)
-            // Window = left context + new frames must fit the fixed-T graph, so
-            // advance by at most CODEC_CHUNK - ctx new frames per chunk.
-            val j = min(i + CODEC_CHUNK - ctx, frames.size)
-            val n = j - (i - ctx) // = new frames + ctx, always <= CODEC_CHUNK
-            val buf = IntArray(16 * CODEC_CHUNK)
-            for (t in 0 until n) {
-                val frame = frames[i - ctx + t]
-                for (q in 0 until 16) {
-                    buf[q * CODEC_CHUNK + t] = frame[q]
-                }
-            }
-            codecAIn[0].writeInt(buf)
-            codecA.run(codecAIn, codecAOut)
-            codecB.run(listOf(codecAOut[0]), codecBOut)
-            val wav = codecBOut[0].readFloat()
-            pieces.add(wav.copyOfRange(ctx * UPSAMPLE, n * UPSAMPLE))
-            i = j
-        }
-        for (buffer in codecAIn + codecAOut + codecBOut) {
-            buffer.close()
-        }
-        var total = 0
-        for (p in pieces) {
-            total += p.size
-        }
-        val out = FloatArray(total)
-        var off = 0
-        for (p in pieces) {
-            System.arraycopy(p, 0, out, off, p.size)
-            off += p.size
-        }
-        return out
-    }
+    private fun decodeCodes(frames: List<IntArray>): FloatArray =
+        decodeCodesRange(frames, 0, frames.size)
 
     // ------------------------------------------------------------------
     // Host math helpers.
@@ -474,33 +494,37 @@ class Qwen3TtsEngine(private val dir: File) {
     private fun add(a: FloatArray, b: FloatArray): FloatArray =
         FloatArray(HIDDEN) { a[it] + b[it] }
 
-    /** text_embedding lookup + the 2048->1024 SiLU projection MLP. */
+    /**
+     * text_embedding lookup + the 2048->1024 SiLU projection MLP.
+     *
+     * Workspace ([embX]/ [embH]) is reused across tokens to cut GC on the
+     * prompt-assembly path. A LiteRT projection op would be faster still;
+     * until that lands, this keeps host matmul alloc-free per token.
+     */
     private fun embedText(ids: IntArray): Array<FloatArray> {
         val w1 = proj.getValue("w1")
         val b1 = proj.getValue("b1")
         val w2 = proj.getValue("w2")
         val b2 = proj.getValue("b2")
         return Array(ids.size) { n ->
-            val x = FloatArray(2048)
-            val base = ids[n] * 2048
-            for (i in 0 until 2048) {
-                x[i] = Npy.halfToFloat(textEmb.get(base + i))
+            val base = ids[n] * EMB_IN
+            for (i in 0 until EMB_IN) {
+                embX[i] = Npy.halfToFloat(textEmb.get(base + i))
             }
-            val h = FloatArray(2048)
-            for (r in 0 until 2048) {
+            for (r in 0 until EMB_IN) {
                 var acc = b1[r]
-                val wBase = r * 2048
-                for (c in 0 until 2048) {
-                    acc += w1[wBase + c] * x[c]
+                val wBase = r * EMB_IN
+                for (c in 0 until EMB_IN) {
+                    acc += w1[wBase + c] * embX[c]
                 }
-                h[r] = acc / (1f + exp(-acc)) // SiLU
+                embH[r] = acc / (1f + exp(-acc)) // SiLU
             }
             val y = FloatArray(HIDDEN)
             for (r in 0 until HIDDEN) {
                 var acc = b2[r]
-                val wBase = r * 2048
-                for (c in 0 until 2048) {
-                    acc += w2[wBase + c] * h[c]
+                val wBase = r * EMB_IN
+                for (c in 0 until EMB_IN) {
+                    acc += w2[wBase + c] * embH[c]
                 }
                 y[r] = acc
             }
@@ -508,7 +532,7 @@ class Qwen3TtsEngine(private val dir: File) {
         }
     }
 
-    /** Greedy argmax or top-50/temperature-0.9 sampling. */
+    /** Greedy argmax or top-50/temperature-0.9 sampling without a full vocab sort. */
     private fun pick(logits: FloatArray, greedy: Boolean, rnd: Random): Int {
         if (greedy) {
             var best = 0
@@ -519,25 +543,36 @@ class Qwen3TtsEngine(private val dir: File) {
             }
             return best
         }
-        val k = 50
-        val idx = logits.indices.sortedByDescending { logits[it] }.take(k)
-        val probs = DoubleArray(k)
-        val maxLogit = logits[idx[0]] / 0.9
+        // Partial top-k: one pass, keep the k largest. O(n·k) with k=50 ≪ n log n.
+        topKVal.fill(Float.NEGATIVE_INFINITY)
+        for (i in logits.indices) {
+            val v = logits[i]
+            if (v <= topKVal[TOP_K - 1]) continue
+            var slot = TOP_K - 1
+            while (slot > 0 && v > topKVal[slot - 1]) {
+                topKVal[slot] = topKVal[slot - 1]
+                topKIdx[slot] = topKIdx[slot - 1]
+                slot--
+            }
+            topKVal[slot] = v
+            topKIdx[slot] = i
+        }
+        val maxLogit = topKVal[0] / 0.9
         var sum = 0.0
-        for (i in 0 until k) {
-            probs[i] = exp(logits[idx[i]] / 0.9 - maxLogit)
-            sum += probs[i]
+        for (i in 0 until TOP_K) {
+            topKProbs[i] = exp(topKVal[i] / 0.9 - maxLogit)
+            sum += topKProbs[i]
         }
         var r = rnd.nextDouble() * sum
-        for (i in 0 until k) {
-            r -= probs[i]
-            if (r <= 0) return idx[i]
+        for (i in 0 until TOP_K) {
+            r -= topKProbs[i]
+            if (r <= 0) return topKIdx[i]
         }
-        return idx[k - 1]
+        return topKIdx[TOP_K - 1]
     }
 
     fun close() {
-        for (buffer in mtpIn + mtpOut) {
+        for (buffer in mtpIn + mtpOut + codecAIn + codecAOut + codecBOut) {
             buffer.close()
         }
         talker.close()

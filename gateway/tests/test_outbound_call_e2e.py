@@ -77,7 +77,7 @@ class TestGrantIssuance:
         # The URI the phone will INVITE: TLS, on the provisioned domain, with
         # the destination as the user part.
         assert grant["sip_uri"] == (
-            f"sips:{DESTINATION.removeprefix('+')}@phone.plivo.com:5061;transport=tls"
+            f"sip:{DESTINATION.removeprefix('+')}@phone.plivo.com;transport=udp"
         )
         assert grant["expires_in_seconds"] == 120
         # Hex, because Plivo drops punctuation from custom SIP header values.

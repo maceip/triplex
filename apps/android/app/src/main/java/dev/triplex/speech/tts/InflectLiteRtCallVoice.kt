@@ -31,6 +31,9 @@ import kotlin.random.Random
  * Apache-licensed Kokoro neural G2P plus CMU dictionary, remapped onto
  * Inflect's compatible StyleTTS2 symbol table. Audio is generated at 24 kHz
  * and converted to the native media runtime's canonical 16 kHz mono PCM.
+ *
+ * Encoder/decoder I/O tensors are reused across utterances when shapes match
+ * so [allocateTensors] is not paid on every speak.
  */
 @Singleton
 class InflectLiteRtCallVoice @Inject constructor(
@@ -61,6 +64,15 @@ class InflectLiteRtCallVoice @Inject constructor(
     }
     private val decoder by decoderDelegate
 
+    // Reused when token/frame counts match the previous utterance.
+    private var encoderTokenLen = -1
+    private var decoderFrameLen = -1
+    private var mean: Array<Array<FloatArray>>? = null
+    private var logScale: Array<Array<FloatArray>>? = null
+    private var logDuration: Array<Array<FloatArray>>? = null
+    private var latent: Array<Array<FloatArray>>? = null
+    private var waveform: Array<FloatArray>? = null
+
     suspend fun synthesize(text: String): ShortArray = withContext(Dispatchers.Default) {
         inferenceMutex.withLock {
             runCatching { synthesizeLocked(text) }
@@ -69,9 +81,27 @@ class InflectLiteRtCallVoice @Inject constructor(
         }
     }
 
+    /** Eager-load interpreters so the first live speak avoids cold open. */
+    suspend fun warm() = withContext(Dispatchers.Default) {
+        inferenceMutex.withLock {
+            runCatching {
+                encoder
+                decoder
+                phonemizer
+            }.onFailure { Timber.w(it, "Inflect warm failed") }
+        }
+    }
+
     fun close() {
         if (encoderDelegate.isInitialized()) runCatching { encoder.close() }
         if (decoderDelegate.isInitialized()) runCatching { decoder.close() }
+        mean = null
+        logScale = null
+        logDuration = null
+        latent = null
+        waveform = null
+        encoderTokenLen = -1
+        decoderFrameLen = -1
     }
 
     fun shutdown() = close()
@@ -84,46 +114,63 @@ class InflectLiteRtCallVoice @Inject constructor(
         val tokens = IntArray(phonemeIds.size * 2 + 1)
         phonemeIds.forEachIndexed { index, token -> tokens[index * 2 + 1] = token }
 
-        encoder.resizeInput(0, intArrayOf(1, tokens.size))
-        encoder.allocateTensors()
-
-        val mean = Array(1) { Array(tokens.size) { FloatArray(CHANNELS) } }
-        val logScale = Array(1) { Array(tokens.size) { FloatArray(CHANNELS) } }
-        val logDuration = Array(1) { Array(tokens.size) { FloatArray(1) } }
+        ensureEncoderShapes(tokens.size)
         encoder.runForMultipleInputsOutputs(
             arrayOf(arrayOf(tokens)),
-            mutableMapOf<Int, Any>(0 to mean, 1 to logScale, 2 to logDuration)
+            mutableMapOf<Int, Any>(0 to mean!!, 1 to logScale!!, 2 to logDuration!!)
         )
 
         val durations = IntArray(tokens.size) { index ->
-            ceil(exp(logDuration[0][index][0].toDouble()) / SPEED)
+            ceil(exp(logDuration!![0][index][0].toDouble()) / SPEED)
                 .toInt()
                 .coerceIn(0, MAX_FRAMES_PER_TOKEN)
         }
         val totalFrames = durations.sum().coerceAtMost(MAX_TOTAL_FRAMES)
         if (totalFrames == 0) return ShortArray(0)
 
-        val latent = Array(1) { Array(totalFrames) { FloatArray(CHANNELS) } }
+        ensureDecoderShapes(totalFrames)
+        val latentOut = latent!!
         val random = GaussianRandom(seed = text.hashCode())
         var frame = 0
         for (tokenIndex in durations.indices) {
             repeat(durations[tokenIndex]) {
                 if (frame >= totalFrames) return@repeat
                 for (channel in 0 until CHANNELS) {
-                    latent[0][frame][channel] = mean[0][tokenIndex][channel] +
-                        random.next() * exp(logScale[0][tokenIndex][channel].toDouble()).toFloat() * VARIATION
+                    latentOut[0][frame][channel] = mean!![0][tokenIndex][channel] +
+                        random.next() * exp(logScale!![0][tokenIndex][channel].toDouble()).toFloat() * VARIATION
                 }
                 frame++
             }
             if (frame >= totalFrames) break
         }
 
-        decoder.resizeInput(0, intArrayOf(1, totalFrames, CHANNELS))
-        decoder.allocateTensors()
-        val waveform = Array(1) { FloatArray(totalFrames * SAMPLES_PER_FRAME) }
-        decoder.run(latent, waveform)
-        applyEdgeFade(waveform[0])
-        return resampleTo16k(waveform[0])
+        val wave = waveform!!
+        // Decoder writes into wave[0]; length is totalFrames * SAMPLES_PER_FRAME.
+        decoder.run(latentOut, wave)
+        val samples = wave[0]
+        applyEdgeFade(samples, totalFrames * SAMPLES_PER_FRAME)
+        return resampleTo16k(samples, totalFrames * SAMPLES_PER_FRAME)
+    }
+
+    private fun ensureEncoderShapes(tokenLen: Int) {
+        if (tokenLen != encoderTokenLen) {
+            encoder.resizeInput(0, intArrayOf(1, tokenLen))
+            encoder.allocateTensors()
+            mean = Array(1) { Array(tokenLen) { FloatArray(CHANNELS) } }
+            logScale = Array(1) { Array(tokenLen) { FloatArray(CHANNELS) } }
+            logDuration = Array(1) { Array(tokenLen) { FloatArray(1) } }
+            encoderTokenLen = tokenLen
+        }
+    }
+
+    private fun ensureDecoderShapes(frameLen: Int) {
+        if (frameLen != decoderFrameLen) {
+            decoder.resizeInput(0, intArrayOf(1, frameLen, CHANNELS))
+            decoder.allocateTensors()
+            latent = Array(1) { Array(frameLen) { FloatArray(CHANNELS) } }
+            waveform = Array(1) { FloatArray(frameLen * SAMPLES_PER_FRAME) }
+            decoderFrameLen = frameLen
+        }
     }
 
     private fun loadAsset(path: String): ByteBuffer {
@@ -137,27 +184,27 @@ class InflectLiteRtCallVoice @Inject constructor(
     }
 
     private fun interpreterOptions() = Interpreter.Options().apply {
-        setNumThreads(4)
+        setNumThreads(INFERENCE_THREADS)
         setUseXNNPACK(true)
     }
 
-    private fun applyEdgeFade(samples: FloatArray) {
-        val count = min(FADE_SAMPLES, samples.size / 2)
+    private fun applyEdgeFade(samples: FloatArray, length: Int) {
+        val count = min(FADE_SAMPLES, length / 2)
         if (count == 0) return
         for (index in 0 until count) {
             val gain = index.toFloat() / count
             samples[index] *= gain
-            samples[samples.lastIndex - index] *= gain
+            samples[length - 1 - index] *= gain
         }
     }
 
-    private fun resampleTo16k(input: FloatArray): ShortArray {
-        if (input.isEmpty()) return ShortArray(0)
-        val outputSize = (input.size.toLong() * OUTPUT_RATE / MODEL_RATE).toInt()
+    private fun resampleTo16k(input: FloatArray, inputLen: Int): ShortArray {
+        if (inputLen <= 0) return ShortArray(0)
+        val outputSize = (inputLen.toLong() * OUTPUT_RATE / MODEL_RATE).toInt()
         return ShortArray(outputSize) { index ->
             val source = index.toDouble() * MODEL_RATE / OUTPUT_RATE
-            val left = floor(source).toInt().coerceAtMost(input.lastIndex)
-            val right = min(left + 1, input.lastIndex)
+            val left = floor(source).toInt().coerceAtMost(inputLen - 1)
+            val right = min(left + 1, inputLen - 1)
             val fraction = (source - left).toFloat()
             val sample = input[left] + (input[right] - input[left]) * fraction
             (sample.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
@@ -193,6 +240,8 @@ class InflectLiteRtCallVoice @Inject constructor(
         const val MAX_FRAMES_PER_TOKEN = 64
         const val MAX_TOTAL_FRAMES = 2_400
         const val FADE_SAMPLES = MODEL_RATE / 200
+        /** Leave headroom for SODA + Nano on mid-tier phones. */
+        const val INFERENCE_THREADS = 2
 
         const val IPA_SYMBOLS =
             "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"

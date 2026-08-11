@@ -6,8 +6,11 @@
 #include <pjmedia/conference.h>
 #include <pjmedia/port.h>
 #include <pjmedia/transport_srtp.h>
+#include <pjsip/sip_errno.h>
 #include <pjsip/sip_transport_tls.h>
 #include <pjsua-lib/pjsua.h>
+
+#include <android/log.h>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +36,8 @@ constexpr size_t kIncomingPcmCapacity = 16'000 * 30;
 std::array<int16_t, kIncomingPcmCapacity> incoming_pcm{};
 std::atomic<uint64_t> incoming_pcm_read{0};
 std::atomic<uint64_t> incoming_pcm_write{0};
+
+void pjsip_android_log(int level, const char *data, int len);
 
 void capture_incoming_pcm(const int16_t *samples, size_t count) {
   if (samples == nullptr || count == 0) {
@@ -173,11 +178,21 @@ bool valid_dtmf(const char *digits) {
 }
 
 bool valid_secure_sip_uri(const char *uri) {
-  if (uri == nullptr || std::strncmp(uri, "sips:", 5) != 0) {
+  // Authorized outbound grants: UDP Direct (`sip:…;transport=udp`) or legacy
+  // TLS (`sips:…;transport=tls`). Both must stay free of header-injection bytes.
+  if (uri == nullptr) {
+    return false;
+  }
+  const bool sips = std::strncmp(uri, "sips:", 5) == 0;
+  const bool sip = !sips && std::strncmp(uri, "sip:", 4) == 0;
+  if (!sips && !sip) {
     return false;
   }
   const size_t length = std::strlen(uri);
   if (length < 6 || length >= kUriCapacity) {
+    return false;
+  }
+  if (std::strstr(uri, "phone.plivo.com") == nullptr) {
     return false;
   }
   return std::strchr(uri, '\r') == nullptr && std::strchr(uri, '\n') == nullptr;
@@ -217,6 +232,9 @@ struct TriplexPjsipEngine {
   std::array<char, kUriCapacity> force_contact_uri{};
   uint16_t tls_port = 5061;
   uint16_t registration_timeout_seconds = 300;
+  // UDP: Plivo Direct REGISTER / inbound Contact / authorized outbound grants.
+  // TLS transport remains available for legacy sips: grants.
+  pjsua_transport_id udp_transport_id = PJSUA_INVALID_ID;
   pjsua_transport_id tls_transport_id = PJSUA_INVALID_ID;
   std::atomic<bool> flow_recovery_pending{false};
 
@@ -242,7 +260,7 @@ struct TriplexPjsipEngine {
   pj_pool_t *media_port_pool = nullptr;
   DirectMediaPort *media_port = nullptr;
   pjsua_conf_port_id media_port_slot = PJSUA_INVALID_ID;
-  std::array<pjsua_transport_id, 4> tls_transport_ids{
+  std::array<pjsua_transport_id, 4> transport_ids{
       PJSUA_INVALID_ID,
       PJSUA_INVALID_ID,
       PJSUA_INVALID_ID,
@@ -270,11 +288,41 @@ struct TriplexPjsipEngine {
 
   // Incremental synth stream: Kotlin pushes PCM chunks; a pacing thread drains
   // 10 ms frames into the media synth ring until final or interrupt.
+  // Chunked queue (vector per push) avoids per-sample deque ops under the lock
+  // when Inflect dumps a whole utterance at once.
   std::mutex stream_mu;
   std::condition_variable stream_cv;
-  std::deque<int16_t> stream_queue;
+  std::deque<std::vector<int16_t>> stream_chunks;
+  size_t stream_chunk_offset = 0;
   std::atomic<bool> stream_final{false};
   std::atomic<bool> stream_active{false};
+
+  void clear_stream_queue_locked() {
+    stream_chunks.clear();
+    stream_chunk_offset = 0;
+  }
+
+  bool stream_queue_empty_locked() const {
+    return stream_chunks.empty();
+  }
+
+  size_t drain_stream_locked(int16_t *dst, size_t capacity) {
+    size_t filled = 0;
+    while (filled < capacity && !stream_chunks.empty()) {
+      auto &chunk = stream_chunks.front();
+      const size_t available = chunk.size() - stream_chunk_offset;
+      const size_t take = std::min(available, capacity - filled);
+      std::memcpy(dst + filled, chunk.data() + stream_chunk_offset,
+                  take * sizeof(int16_t));
+      filled += take;
+      stream_chunk_offset += take;
+      if (stream_chunk_offset >= chunk.size()) {
+        stream_chunks.pop_front();
+        stream_chunk_offset = 0;
+      }
+    }
+    return filled;
+  }
 
   void push_control_event(uint16_t type, uint16_t code, int32_t call_id,
                           int32_t status, int32_t operation, uint32_t value) {
@@ -801,9 +849,9 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   pjsua_config_default(&user_agent_config);
   user_agent_config.max_calls = 4;
   user_agent_config.thread_cnt = 1;
-  // Prefer SRTP when the peer offers it; Plivo Direct UDP inbound may land
-  // plain RTP depending on account settings.
-  user_agent_config.use_srtp = PJMEDIA_SRTP_OPTIONAL;
+  // Direct UDP media is plain RTP. Optional SRTP puts a=crypto / SAVP in the
+  // outbound INVITE and Plivo rejects that offer with 488 before /answer.
+  user_agent_config.use_srtp = PJMEDIA_SRTP_DISABLED;
   user_agent_config.srtp_secure_signaling = 0;
   user_agent_config.user_agent =
       pj_str(const_cast<char *>("Triplex-PJSIP/0.1"));
@@ -822,18 +870,21 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   logging_config.msg_logging = PJ_FALSE;
   logging_config.level = 2;
   logging_config.console_level = 0;
+  logging_config.cb = &pjsip_android_log;
 
   pjsua_media_config media_config{};
   pjsua_media_config_default(&media_config);
   media_config.clock_rate = kCanonicalClockRate;
   media_config.snd_clock_rate = kCanonicalClockRate;
   media_config.channel_count = 1;
+  // Bridge stays on 10 ms frames (matches DirectMediaPort samples). SDP
+  // advertises 20 ms G.711 packets — Plivo 488'd 10 ms offers.
   media_config.audio_frame_ptime = 10;
   media_config.thread_cnt = 1;
   media_config.has_ioqueue = PJ_TRUE;
   media_config.ec_tail_len = 0;
   media_config.no_vad = PJ_TRUE;
-  media_config.ptime = 10;
+  media_config.ptime = 20;
   media_config.jb_init = 20;
   media_config.jb_min_pre = 20;
   media_config.jb_max_pre = 60;
@@ -855,19 +906,20 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
       PJ_SSL_SOCK_PROTO_TLS1_2 | PJ_SSL_SOCK_PROTO_TLS1_3;
   transport_config.tls_setting.timeout.sec = 5;
   transport_config.tls_setting.timeout.msec = 0;
-  // UDP for Plivo Direct registration; TLS transport kept for authorized
-  // outbound sips: dials that still use the grant path.
+  // UDP for Plivo Direct registration and authorized outbound grants.
+  // TLS remains for legacy sips: dials.
   status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_config,
-                                  &engine->tls_transport_ids[0]);
+                                  &engine->transport_ids[0]);
   if (status != PJ_SUCCESS) {
     return status;
   }
   status = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
-                                  &engine->tls_transport_ids[1]);
+                                  &engine->transport_ids[1]);
   if (status != PJ_SUCCESS) {
     return status;
   }
-  engine->tls_transport_id = engine->tls_transport_ids[0];
+  engine->udp_transport_id = engine->transport_ids[0];
+  engine->tls_transport_id = engine->transport_ids[1];
   return PJ_SUCCESS;
 }
 
@@ -911,7 +963,7 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ipv6_sip_use = PJSUA_IPV6_DISABLED;
   account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
-  account_config.use_srtp = PJMEDIA_SRTP_OPTIONAL;
+  account_config.use_srtp = PJMEDIA_SRTP_DISABLED;
   account_config.srtp_secure_signaling = 0;
   // Advertise the public mapping so Plivo's Dial-to-Contact path can reach
   // this UA. Keepalives refresh the NAT binding Plivo will INVITE into.
@@ -924,9 +976,12 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
       pj_str(const_cast<char *>("<urn:uuid:triplex-plivo-direct-001>"));
   account_config.rfc5626_reg_id = pj_str(const_cast<char *>("1"));
   account_config.ka_interval = 10;
-  if (engine->tls_transport_id != PJSUA_INVALID_ID) {
-    account_config.transport_id = engine->tls_transport_id;
-  }
+  // Do not pin the account to a single transport. REGISTER uses
+  // `;transport=udp` on reg_uri (Plivo Direct Contact). Authorized outbound
+  // now also uses `sip:…;transport=udp` so URI selection stays on UDP —
+  // legacy `sips:…;transport=tls` still works without pinning because the
+  // account transport_id stays PJSUA_INVALID_ID.
+  account_config.transport_id = PJSUA_INVALID_ID;
   account_config.cred_count = 1;
   account_config.cred_info[0].realm = pj_str(engine->realm.data());
   account_config.cred_info[0].scheme = pj_str(const_cast<char *>("digest"));
@@ -949,8 +1004,26 @@ void prioritize_pstn_codecs() {
   }
   pj_str_t pcmu = pj_str(const_cast<char *>("PCMU/8000"));
   pj_str_t pcma = pj_str(const_cast<char *>("PCMA/8000"));
+  pj_str_t telephone = pj_str(const_cast<char *>("telephone-event/8000"));
   pjsua_codec_set_priority(&pcmu, PJMEDIA_CODEC_PRIO_HIGHEST);
   pjsua_codec_set_priority(&pcma, PJMEDIA_CODEC_PRIO_NEXT_HIGHER);
+  // Plivo Direct expects RFC2833 DTMF in the offer; disabling it can 488.
+  pjsua_codec_set_priority(&telephone, (pj_uint8_t)(PJMEDIA_CODEC_PRIO_NEXT_HIGHER - 1));
+}
+
+void pjsip_android_log(int level, const char *data, int len) {
+  if (data == nullptr || len <= 0) {
+    return;
+  }
+  int priority = ANDROID_LOG_DEBUG;
+  if (level <= 1) {
+    priority = ANDROID_LOG_ERROR;
+  } else if (level == 2) {
+    priority = ANDROID_LOG_WARN;
+  } else if (level == 3) {
+    priority = ANDROID_LOG_INFO;
+  }
+  __android_log_print(priority, "pjsip", "%.*s", len, data);
 }
 
 void secure_zero(std::array<char, kPasswordCapacity> *password) {
@@ -1064,6 +1137,9 @@ extern "C" int triplex_pjsip_make_call(TriplexPjsipEngine *engine,
       !valid_route_grant_header(grant_header_name, grant_header_value)) {
     return PJ_EINVAL;
   }
+  if (engine->tls_transport_id == PJSUA_INVALID_ID) {
+    return PJSIP_ETPNOTAVAIL;
+  }
   ensure_pj_thread_registered();
   pj_str_t destination = pj_str(const_cast<char *>(authorized_sip_uri));
   pj_str_t header_name = pj_str(const_cast<char *>(grant_header_name));
@@ -1074,6 +1150,8 @@ extern "C" int triplex_pjsip_make_call(TriplexPjsipEngine *engine,
   pjsua_msg_data_init(&message_data);
   pj_list_push_back(&message_data.hdr_list, &grant_header);
   pjsua_call_id call_id = PJSUA_INVALID_ID;
+  // URI scheme/params select TLS; account stays unpinned so UDP REGISTER Contact
+  // remains the Direct inbound identity.
   const pj_status_t status = pjsua_call_make_call(
       engine->account_id, &destination, 0, nullptr, &message_data, &call_id);
   if (status == PJ_SUCCESS) {
@@ -1102,7 +1180,7 @@ extern "C" uint32_t triplex_pjsip_interrupt(TriplexPjsipEngine *engine) {
   engine->tone_generation.fetch_add(1, std::memory_order_acq_rel);
   {
     std::lock_guard<std::mutex> lock(engine->stream_mu);
-    engine->stream_queue.clear();
+    engine->clear_stream_queue_locked();
     engine->stream_final.store(true, std::memory_order_release);
     engine->stream_active.store(false, std::memory_order_release);
   }
@@ -1223,7 +1301,7 @@ extern "C" int triplex_pjsip_begin_streaming_synthesis(
   }
   {
     std::lock_guard<std::mutex> lock(engine->stream_mu);
-    engine->stream_queue.clear();
+    engine->clear_stream_queue_locked();
     engine->stream_final.store(false, std::memory_order_release);
     engine->stream_active.store(true, std::memory_order_release);
   }
@@ -1238,35 +1316,32 @@ extern "C" int triplex_pjsip_begin_streaming_synthesis(
           triplex_media_epoch(engine->media_runtime) != epoch) {
         break;
       }
+      bool queue_empty = false;
       {
         std::unique_lock<std::mutex> lock(engine->stream_mu);
         engine->stream_cv.wait_for(lock, std::chrono::milliseconds(5), [&] {
-          return !engine->stream_queue.empty() ||
+          return !engine->stream_queue_empty_locked() ||
                  engine->stream_final.load(std::memory_order_acquire) ||
                  engine->tone_generation.load(std::memory_order_acquire) !=
                      generation;
         });
-        while (pending < TRIPLEX_FRAME_SAMPLES && !engine->stream_queue.empty()) {
-          frame[pending++] = engine->stream_queue.front();
-          engine->stream_queue.pop_front();
-        }
+        const size_t got = engine->drain_stream_locked(
+            frame.data() + pending, TRIPLEX_FRAME_SAMPLES - pending);
+        pending += got;
         saw_final = engine->stream_final.load(std::memory_order_acquire);
+        queue_empty = engine->stream_queue_empty_locked();
       }
       if (pending == TRIPLEX_FRAME_SAMPLES ||
-          (saw_final && pending > 0 && engine->stream_queue.empty())) {
+          (saw_final && pending > 0 && queue_empty)) {
         if (pending < TRIPLEX_FRAME_SAMPLES) {
           std::fill(frame.begin() + static_cast<std::ptrdiff_t>(pending),
                     frame.end(), 0);
         }
         next_deadline += std::chrono::milliseconds(10);
-        const bool last =
-            saw_final && engine->stream_queue.empty() &&
-            pending <= TRIPLEX_FRAME_SAMPLES;
-        // Re-check queue emptiness under lock for the final flag.
-        bool queue_empty = false;
+        // Re-check under lock: more PCM may have arrived while we prepared.
         {
           std::lock_guard<std::mutex> lock(engine->stream_mu);
-          queue_empty = engine->stream_queue.empty();
+          queue_empty = engine->stream_queue_empty_locked();
           saw_final = engine->stream_final.load(std::memory_order_acquire);
         }
         const uint16_t flags =
@@ -1281,7 +1356,6 @@ extern "C" int triplex_pjsip_begin_streaming_synthesis(
         if (flags & TRIPLEX_FLAG_FINAL_CHUNK) {
           break;
         }
-        (void)last;
       } else if (saw_final && pending == 0) {
         break;
       }
@@ -1305,8 +1379,8 @@ extern "C" int triplex_pjsip_push_streaming_synthesis(
   }
   {
     std::lock_guard<std::mutex> lock(engine->stream_mu);
-    for (size_t i = 0; i < sample_count; ++i) {
-      engine->stream_queue.push_back(samples[i]);
+    if (sample_count > 0) {
+      engine->stream_chunks.emplace_back(samples, samples + sample_count);
     }
     if (final_chunk) {
       engine->stream_final.store(true, std::memory_order_release);

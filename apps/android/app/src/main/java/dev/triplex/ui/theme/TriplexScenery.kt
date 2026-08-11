@@ -5,6 +5,19 @@ import zed.rainxch.rikkaui.foundation.RikkaScenery
 import zed.rainxch.rikkaui.foundation.RikkaSceneryLobe
 
 /**
+ * The brand pair, and the only literal colours left in the app.
+ *
+ * Every semantic role — primary, surface, destructive — now comes from
+ * `RikkaTheme.colors` (Zinc + Violet, installed by [LiquidGlassTheme]). These
+ * four survive because the scene behind the glass is not a semantic role: it is
+ * Triplex's identity, and it has to stay recognisable across a palette swap.
+ */
+private val SignalViolet = Color(0xFF6558E8)
+private val SignalVioletLight = Color(0xFFCAC3FF)
+private val VoiceCyan = Color(0xFF006B75)
+private val VoiceCyanLight = Color(0xFF62D9E6)
+
+/**
  * Triplex's violet/cyan scene, tuned so glass refraction has something to act on.
  *
  * The previous [TriplexBackground] washed a near-flat gradient with two auras at

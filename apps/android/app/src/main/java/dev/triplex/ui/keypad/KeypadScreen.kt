@@ -21,8 +21,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +57,7 @@ import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexSectionHeader
 import dev.triplex.ui.components.TriplexSetupBanner
 import dev.triplex.ui.components.TriplexStatusPill
+import kotlin.math.abs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import zed.rainxch.rikkaicons.tokens.ChevronDown
@@ -88,6 +87,8 @@ import zed.rainxch.rikkaui.components.ui.glass.rememberGlassBackdrop
 import zed.rainxch.rikkaui.components.ui.glass.rememberGlassBackdrops
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
@@ -131,6 +132,11 @@ fun KeypadScreen(
     // dial hits and on whether the SIM affordance is there at all, and both the
     // list's bottom inset and the FAB stack have to clear it.
     var dockHeight by remember { mutableStateOf(0.dp) }
+
+    // One stable lambda for the whole screen. `viewModel::dispatch` allocates a
+    // fresh reference on every recomposition, which defeats skipping in every
+    // child that takes it — and the dock takes it while the user types into it.
+    val onIntent = remember(viewModel) { { intent: KeypadIntent -> viewModel.dispatch(intent) } }
 
     LaunchedEffect(viewModel) {
         viewModel.effects.collectLatest { effect ->
@@ -256,16 +262,27 @@ fun KeypadScreen(
         // flat tint.
         CompositionLocalProvider(LocalGlassBackdrop provides scenery) {
             DialDock(
-                state = state,
+                dialString = state.dialString,
+                dialMatches = state.dialMatches,
+                canPlaceCall = state.canPlaceCall,
+                accounts = state.accounts,
+                selectedAccountId = state.selectedAccountId,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .onSizeChanged { size ->
-                        dockHeight = with(density) { size.height.toDp() }
+                        val next = with(density) { size.height.toDp() }
+                        // The measured height feeds the list's bottom inset and
+                        // the FAB stack's offset, so a one-pixel wobble would
+                        // relayout both. Only a change big enough to see is
+                        // worth propagating.
+                        if (abs((next - dockHeight).value) > DockHeightEpsilon) {
+                            dockHeight = next
+                        }
                     },
-                onIntent = viewModel::dispatch,
+                onIntent = onIntent,
                 onPaste = {
                     clipboard.getText()?.text?.let {
-                        viewModel.dispatch(KeypadIntent.SetDialString(it))
+                        onIntent(KeypadIntent.SetDialString(it))
                     }
                 },
                 onOpenAccountPicker = { accountPickerVisible = true },
@@ -541,7 +558,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.recentsBody(
                     direction = call.type.toCallDirection(),
                     // Unread rides the badge slot rather than a bullet glued to
                     // the name, so a screen reader announces it as its own thing.
-                    agentBadge = if (call.unread) "NEW" else "",
+                    badge = if (call.unread) "NEW" else "",
                     // The call log is read-only here — there is no delete intent
                     // to wire, and an empty callback hides the swipe action.
                     callBackLabel = "Call $title",
@@ -558,12 +575,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.recentsBody(
     if (state.hasMoreRecents) {
         item(key = "recents-more") {
             Text(
-                "Loading older calls…",
+                text = "Loading older calls…",
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
                 textAlign = TextAlign.Center,
             )
         }
@@ -608,16 +625,16 @@ private fun ExpandedHistory(history: List<RecentCall>) {
     ) {
         if (history.isEmpty()) {
             Text(
-                "Loading call history…",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "Loading call history…",
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
             )
         }
         history.forEach { entry ->
             Text(
-                "${entry.typeLabel} · ${entry.whenLabel} · ${formatDuration(entry.durationSeconds)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "${entry.typeLabel} · ${entry.whenLabel} · ${formatDuration(entry.durationSeconds)}",
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
             )
         }
     }
@@ -634,7 +651,9 @@ private fun ExpandedHistory(history: List<RecentCall>) {
 @Composable
 private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
     val display = contact.name.ifBlank { contact.number }
-    TriplexCard(onClick = onCall) {
+    // Subtle for the same reason the list rows are: a strip of these sits on the
+    // screen rather than floating over it.
+    TriplexCard(onClick = onCall, level = GlassLevel.Subtle) {
         Column(
             modifier = Modifier
                 .width(FavoriteChipWidth)
@@ -649,8 +668,8 @@ private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
                 label = "Call $display",
             )
             Text(
-                display,
-                style = MaterialTheme.typography.labelMedium,
+                text = display,
+                variant = TextVariant.Small,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -684,22 +703,35 @@ private fun initialsOf(display: String): String =
  * gave the rarest control on the screen the best position on it. It is now a
  * quiet ghost button under the action row that names the active account and
  * opens the picker; it appears at all only on a device with more than one.
+ *
+ * Takes the five pieces of state it draws rather than the whole [KeypadUiState]:
+ * the dock is on screen permanently, so a recents page loading in a panel behind
+ * it would otherwise recompose the keypad.
  */
 @Composable
 private fun DialDock(
-    state: KeypadUiState,
+    dialString: String,
+    dialMatches: List<KeypadSearchResult>,
+    canPlaceCall: Boolean,
+    accounts: List<DialerPhoneAccount>,
+    selectedAccountId: String?,
     onIntent: (KeypadIntent) -> Unit,
     onPaste: () -> Unit,
     onOpenAccountPicker: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The pad's own handler, hoisted out of the modifier chain: an inline lambda
+    // here is a new reference on every keystroke, and GlassDialpad hands it down
+    // to twelve keys.
+    val onKeyPress = remember(onIntent) { { digit: Char -> onIntent(KeypadIntent.AppendDigit(digit)) } }
+
     GlassPanel(modifier = modifier.fillMaxWidth().padding(12.dp)) {
         Column(
             modifier = Modifier.padding(RikkaTheme.spacing.lg),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.md),
         ) {
-            state.dialMatches.take(DockMatchLimit).forEach { match ->
+            dialMatches.take(DockMatchLimit).forEach { match ->
                 TriplexListRow(
                     title = match.title,
                     subtitle = match.subtitle,
@@ -710,7 +742,7 @@ private fun DialDock(
             }
 
             TriplexDialDisplay(
-                value = state.dialString,
+                value = dialString,
                 onValueChange = { onIntent(KeypadIntent.SetDialString(it)) },
                 onPaste = onPaste,
             )
@@ -724,7 +756,7 @@ private fun DialDock(
             // once per nesting level — so Prominent here is what actually lands
             // on Regular tokens (12dp blur, 26dp refraction) at the key itself.
             GlassDialpad(
-                onKeyPress = { digit -> onIntent(KeypadIntent.AppendDigit(digit)) },
+                onKeyPress = onKeyPress,
                 level = GlassLevel.Prominent,
             )
 
@@ -756,14 +788,14 @@ private fun DialDock(
                 Fab(
                     icon = RikkaIcons.Phone,
                     label = "Call",
-                    onClick = { onIntent(KeypadIntent.PlaceCall(state.dialString)) },
+                    onClick = { onIntent(KeypadIntent.PlaceCall(dialString)) },
                     size = FabSize.Large,
-                    enabled = state.canPlaceCall,
+                    enabled = canPlaceCall,
                     shape = RikkaTheme.shapes.full,
                 )
                 GlassIconButton(
                     onClick = { onIntent(KeypadIntent.DeleteDigit) },
-                    enabled = state.dialString.isNotEmpty(),
+                    enabled = dialString.isNotEmpty(),
                     size = DockSecondaryKeySize,
                     level = GlassLevel.Prominent,
                     // `X` renders as a filled tile in the Phosphor Fill weight,
@@ -775,8 +807,8 @@ private fun DialDock(
                 }
             }
 
-            if (state.accounts.size > 1) {
-                val active = state.accounts.firstOrNull { it.id == state.selectedAccountId }
+            if (accounts.size > 1) {
+                val active = accounts.firstOrNull { it.id == selectedAccountId }
                 TriplexButton(
                     text = active?.label ?: "Choose a SIM",
                     onClick = onOpenAccountPicker,
@@ -786,19 +818,22 @@ private fun DialDock(
             }
 
             Text(
-                "Hold 0 for +",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "Hold 0 for +",
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
             )
         }
     }
 }
 
-/** Smart dial in the dock is a hint, not a browser — the keys keep their room. */
 /** Diameter of the voicemail and backspace keys flanking the Call button. */
 private val DockSecondaryKeySize = 56.dp
 
+/** Smart dial in the dock is a hint, not a browser — the keys keep their room. */
 private const val DockMatchLimit = 2
+
+/** Dock-height change, in dp, small enough that re-insetting the list is not worth it. */
+private const val DockHeightEpsilon = 4f
 
 /**
  * The SIM picker, in both of the situations that need one.
@@ -826,9 +861,9 @@ private fun AccountChoiceOverlay(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(text = title, variant = TextVariant.H4)
             number?.let { TriplexStatusPill(text = it) }
-            Text(description, style = MaterialTheme.typography.bodyMedium)
+            Text(text = description)
             accounts.forEach { account ->
                 TriplexButton(
                     text = account.label,

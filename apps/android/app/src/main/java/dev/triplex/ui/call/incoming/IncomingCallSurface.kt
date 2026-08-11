@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,27 +31,30 @@ import dev.triplex.ui.components.TriplexButtonStyle
 import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexStatusPill
-import dev.triplex.ui.theme.TriplexDesign
-import zed.rainxch.rikkaui.components.ui.call.IncomingCallSheet as GlassIncomingCallSheet
+import zed.rainxch.rikkaui.components.ui.call.CallDecisionSlider
+import zed.rainxch.rikkaui.components.ui.call.IncomingCallSheet
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
+import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
  * The incoming call, hosted by the shell as an overlay.
  *
- * The sheet is state, not a destination: it is on screen because
+ * The surface is state, not a destination: it is on screen because
  * `CallSessionRepository` reports a ringing or screened session, so switching
  * tabs cannot navigate away from it and process death cannot lose it — the
- * session is rebuilt from the telephony stacks and the sheet comes back with it
- * (reskin.md §3.3).
+ * session is rebuilt from the telephony stacks and the surface comes back with
+ * it (reskin.md §3.3).
  *
  * Every control emits a `CallIntent`. Nothing here talks to a telephony stack.
  */
 @Composable
-fun IncomingCallSheetHost(
+fun IncomingCallSurfaceHost(
     modifier: Modifier = Modifier,
     viewModel: IncomingCallViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    IncomingCallSheet(
+    IncomingCallSurface(
         state = state,
         onAction = viewModel::onAction,
         onQuickReply = viewModel::onQuickReply,
@@ -62,8 +63,16 @@ fun IncomingCallSheetHost(
     )
 }
 
+/**
+ * Triplex's incoming call, drawn on the design system's [IncomingCallSheet].
+ *
+ * Named a surface rather than a sheet because the sheet is what it is *built
+ * on*: this is the app's own filling — screening status, the transcript or its
+ * carrier-gated substitute, the automation picker — and on a locked device it
+ * swaps the sheet's two buttons for a [CallDecisionSlider].
+ */
 @Composable
-fun IncomingCallSheet(
+fun IncomingCallSurface(
     state: IncomingCallUiState,
     onAction: (IncomingCallActionId) -> Unit,
     onQuickReply: (String) -> Unit,
@@ -80,6 +89,8 @@ fun IncomingCallSheet(
 
     val answer = state.action(IncomingCallActionId.ANSWER)
     val hangUp = state.action(IncomingCallActionId.HANG_UP)
+    val decline = state.action(IncomingCallActionId.DECLINE)
+    val sendToAgent = state.action(IncomingCallActionId.SEND_TO_AGENT)
 
     // The sheet's own decline-and-answer pair is the right control whenever the
     // call can simply be taken: two smoked-glass buttons, tinted success and
@@ -95,7 +106,7 @@ fun IncomingCallSheet(
         listOf(state.number, state.statusLabel).filter(String::isNotBlank).joinToString(" · ")
     }
 
-    GlassIncomingCallSheet(
+    IncomingCallSheet(
         callerName = state.displayName,
         onAnswer = { onAction(IncomingCallActionId.ANSWER) },
         onDecline = { onAction(IncomingCallActionId.HANG_UP) },
@@ -107,7 +118,7 @@ fun IncomingCallSheet(
         onQuickReply = onQuickReply,
         visible = state.visible,
         content = {
-            val spacing = TriplexDesign.spacing
+            val spacing = RikkaTheme.spacing
 
             TriplexStatusPill(
                 text = state.agentStatus,
@@ -118,8 +129,7 @@ fun IncomingCallSheet(
                 TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.WARNING) {
                     Text(
                         text = notice,
-                        modifier = Modifier.padding(spacing.large),
-                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(spacing.lg),
                     )
                 }
             }
@@ -135,10 +145,18 @@ fun IncomingCallSheet(
         actions = if (lockedDecision || gated) {
             {
                 if (lockedDecision) {
-                    IncomingCallDecisionSlider(
+                    // The visible labels have to fit inside the tracks, so the
+                    // platform's own wording rides the accessibility actions
+                    // instead — that is where "Send to agent" is worth the extra
+                    // words and the bottom track's "Agent" is not enough.
+                    CallDecisionSlider(
                         onDecline = { onAction(IncomingCallActionId.DECLINE) },
                         onAnswer = { onAction(IncomingCallActionId.ANSWER) },
                         onTransfer = { onAction(IncomingCallActionId.SEND_TO_AGENT) },
+                        declineActionLabel = decline?.label.orEmpty().ifBlank { "Decline call" },
+                        answerActionLabel = answer.label.ifBlank { "Answer call" },
+                        transferActionLabel = sendToAgent?.label.orEmpty()
+                            .ifBlank { "Send to the Triplex agent" },
                     )
                 } else {
                     PrimaryActions(state = state, onAction = onAction)
@@ -156,8 +174,7 @@ private fun ColumnScope.TranscriptRegion(state: IncomingCallUiState) {
         Text(
             text = "Listening for why they are calling\u2026",
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = RikkaTheme.colors.onMuted,
             textAlign = TextAlign.Center,
         )
         return
@@ -186,8 +203,7 @@ private fun ColumnScope.TelecomFallbackRegion(
         text = "Triplex cannot hear this call, so there is no transcript. " +
             "These are the controls your carrier allows:",
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = RikkaTheme.colors.onMuted,
     )
     GatedAction(state.action(IncomingCallActionId.TEXT_REPLY), onAction)
     GatedAction(state.action(IncomingCallActionId.SEND_TO_AGENT), onAction)
@@ -203,7 +219,7 @@ private fun ColumnScope.PrimaryActions(
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.medium),
+        horizontalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.md),
     ) {
         answer?.let {
             TriplexButton(
@@ -254,8 +270,8 @@ private fun ColumnScope.DisabledReason(reason: String) {
         modifier = Modifier
             .fillMaxWidth()
             .semantics { contentDescription = "Unavailable: $reason" },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        variant = TextVariant.Small,
+        color = RikkaTheme.colors.onMuted,
     )
 }
 
@@ -283,7 +299,7 @@ private fun ColumnScope.AutomationOverflow(
     AnimatedVisibility(visible = expanded) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(TriplexDesign.spacing.small),
+            verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm),
         ) {
             state.automations.forEach { automation ->
                 TriplexButton(

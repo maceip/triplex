@@ -2,15 +2,20 @@ package dev.triplex.speech.tts
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.channels.awaitClose
+import dev.triplex.dialogue.SpokenReply
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** BRANDED call voice: Inflect Nano → single PCM chunk at 16 kHz. */
+/**
+ * BRANDED call voice: Inflect Nano → 16 kHz PCM.
+ *
+ * Multi-sentence replies are synthesized clause-by-clause so the first
+ * audible audio can start while later clauses are still rendering. Nano is
+ * still batch today; this is the TTS-side half of Nano→Inflect overlap.
+ */
 @Singleton
 class InflectCallVoice @Inject constructor(
     @ApplicationContext context: Context,
@@ -20,9 +25,12 @@ class InflectCallVoice @Inject constructor(
 
     override fun synthesizeStream(text: String): Flow<ShortArray> = flow {
         cancelled.set(false)
-        val pcm = engine.synthesize(text)
-        if (cancelled.get() || pcm.isEmpty()) return@flow
-        emit(pcm)
+        for (clause in SpokenReply.clauses(text)) {
+            if (cancelled.get()) return@flow
+            val pcm = engine.synthesize(clause)
+            if (cancelled.get() || pcm.isEmpty()) continue
+            emit(pcm)
+        }
     }
 
     override fun cancel() {

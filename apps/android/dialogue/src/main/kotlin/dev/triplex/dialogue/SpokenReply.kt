@@ -101,6 +101,19 @@ object SpokenReply {
         return null
     }
 
+    /**
+     * Splits an already-sanitized reply into speakable clauses for TTS
+     * streaming. Empty input yields an empty list.
+     */
+    fun clauses(text: String): List<String> {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val parts = SENTENCE_END.split(trimmed)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        return parts.ifEmpty { listOf(trimmed) }
+    }
+
     private fun clean(line: String): String? {
         var text = line
         text = BRACKETED.replace(text, " ")

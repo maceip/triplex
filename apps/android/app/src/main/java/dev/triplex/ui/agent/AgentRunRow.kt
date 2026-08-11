@@ -29,7 +29,7 @@ fun AgentRunRow(
         detail = run.outcomeSummary?.takeIf(String::isNotBlank).orEmpty(),
         timestamp = relativeTime(run.startedAtMs),
         direction = run.toCallDirection(),
-        agentBadge = run.outcomeLabel(),
+        badge = run.outcomeLabel(),
         onClick = onClick,
     )
 }

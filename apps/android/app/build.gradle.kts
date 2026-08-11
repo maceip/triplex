@@ -142,7 +142,6 @@ dependencies {
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
 
     // Liquid glass. RikkaUI comes from the ~/RikkaUi checkout via the composite
     // build wired in settings.gradle.kts; `foundation` is listed explicitly

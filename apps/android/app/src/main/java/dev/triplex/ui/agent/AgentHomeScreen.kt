@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,12 +30,11 @@ import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
 import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
-import dev.triplex.ui.components.TriplexReveal
 import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.components.TriplexTopBarAction
-import dev.triplex.ui.theme.TriplexDesign
+import dev.triplex.ui.theme.TriplexLayout
 import zed.rainxch.rikkaicons.tokens.Phone
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.call.VoiceOrb
@@ -46,6 +43,8 @@ import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
 import zed.rainxch.rikkaui.components.ui.spinner.Spinner
+import zed.rainxch.rikkaui.components.ui.text.Text
+import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
 
 /**
@@ -66,8 +65,8 @@ fun AgentHomeScreen(
     val state by viewModel.state.collectAsState()
     val sipState by viewModel.sipState.collectAsState()
     val runs by viewModel.runs.collectAsState()
-    val spacing = TriplexDesign.spacing
-    val motion = TriplexDesign.motion
+    val spacing = RikkaTheme.spacing
+    val motion = RikkaTheme.motion
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -86,21 +85,22 @@ fun AgentHomeScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
             contentPadding = PaddingValues(
-                start = spacing.screenHorizontal,
-                end = spacing.screenHorizontal,
-                top = spacing.large,
-                bottom = spacing.xxLarge,
+                start = TriplexLayout.screenHorizontal,
+                end = TriplexLayout.screenHorizontal,
+                top = spacing.lg,
+                bottom = spacing.xxl,
             ),
-            verticalArrangement = Arrangement.spacedBy(spacing.large),
+            verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
             item {
-                TriplexReveal {
-                    AgentReadinessCard(
-                        sipState = sipState,
-                        autoAnswerAll = state.autoAnswerAll,
-                        clonedVoiceReady = state.clonedVoiceReady,
-                    )
-                }
+                // No entrance animation: this is the first thing on the screen
+                // and the answer to "can the agent take a call right now", so
+                // fading it in delays the one line the user came for.
+                AgentReadinessCard(
+                    sipState = sipState,
+                    autoAnswerAll = state.autoAnswerAll,
+                    clonedVoiceReady = state.clonedVoiceReady,
+                )
             }
 
             item {
@@ -113,8 +113,8 @@ fun AgentHomeScreen(
             item {
                 AnimatedVisibility(
                     visible = state.activeTask != null,
-                    enter = fadeIn(tween(motion.standardMillis)) + expandVertically(),
-                    exit = fadeOut(tween(motion.quickMillis)) + shrinkVertically(),
+                    enter = fadeIn(tween(motion.durationSlow)) + expandVertically(),
+                    exit = fadeOut(tween(motion.durationDefault)) + shrinkVertically(),
                 ) {
                     state.activeTask?.let { task ->
                         ActiveTaskCard(task = task, onStop = { viewModel.stopTask(task.id) })
@@ -131,8 +131,7 @@ fun AgentHomeScreen(
                     ) {
                         Text(
                             text = error,
-                            modifier = Modifier.padding(spacing.large),
-                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(spacing.lg),
                         )
                     }
                 }
@@ -151,7 +150,7 @@ fun AgentHomeScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(spacing.xxLarge),
+                            .padding(spacing.xxl),
                         contentAlignment = Alignment.Center,
                     ) {
                         Spinner()
@@ -178,14 +177,14 @@ private fun AgentReadinessCard(
     autoAnswerAll: Boolean,
     clonedVoiceReady: Boolean,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     val registered = sipState == SipState.READY || sipState == SipState.IN_CALL
     TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(spacing.xLarge),
-            horizontalArrangement = Arrangement.spacedBy(spacing.large),
+                .padding(spacing.xl),
+            horizontalArrangement = Arrangement.spacedBy(spacing.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Registered means the agent is sitting on the line waiting, which
@@ -207,7 +206,7 @@ private fun AgentReadinessCard(
             }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(spacing.small),
+                verticalArrangement = Arrangement.spacedBy(spacing.sm),
             ) {
                 TriplexStatusPill(text = sipLabel(sipState), tone = sipTone(sipState))
                 Text(
@@ -218,12 +217,11 @@ private fun AgentReadinessCard(
                     } else {
                         "The agent cannot take calls yet"
                     },
-                    style = MaterialTheme.typography.titleLarge,
+                    variant = TextVariant.H3,
                 )
                 Text(
                     text = sipDetail(sipState),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                    color = RikkaTheme.colors.onMuted,
                 )
                 Text(
                     text = if (clonedVoiceReady) {
@@ -231,8 +229,8 @@ private fun AgentReadinessCard(
                     } else {
                         "Your cloned voice is not ready — the agent will not substitute one."
                     },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
                 )
             }
         }
@@ -241,8 +239,8 @@ private fun AgentReadinessCard(
 
 @Composable
 private fun SetupEntries(onOpenInbound: () -> Unit, onOpenOutbound: () -> Unit) {
-    val spacing = TriplexDesign.spacing
-    Column(verticalArrangement = Arrangement.spacedBy(spacing.medium)) {
+    val spacing = RikkaTheme.spacing
+    Column(verticalArrangement = Arrangement.spacedBy(spacing.md)) {
         SetupEntryCard(
             title = "Incoming calls",
             description = "Answering, greeting, automations, quick replies",
@@ -258,17 +256,17 @@ private fun SetupEntries(onOpenInbound: () -> Unit, onOpenOutbound: () -> Unit) 
 
 @Composable
 private fun SetupEntryCard(title: String, description: String, onClick: () -> Unit) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Column(
-            modifier = Modifier.padding(spacing.large),
-            verticalArrangement = Arrangement.spacedBy(spacing.xSmall),
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(text = title, variant = TextVariant.H4)
             Text(
                 text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.onMuted,
             )
         }
     }
@@ -280,26 +278,26 @@ internal fun ActiveTaskCard(
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = modifier.fillMaxWidth(), tone = TriplexCardTone.SUCCESS) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(spacing.large),
-            horizontalArrangement = Arrangement.spacedBy(spacing.large),
+                .padding(spacing.lg),
+            horizontalArrangement = Arrangement.spacedBy(spacing.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(spacing.xSmall),
+                verticalArrangement = Arrangement.spacedBy(spacing.xs),
             ) {
                 TriplexStatusPill(
                     text = "ACTIVE TASK",
                     tone = TriplexCardTone.SUCCESS,
-                    leadingColor = TriplexDesign.colors.success,
+                    leadingColor = RikkaTheme.colors.success,
                 )
-                Text(taskTypeLabel(task.task_type), style = MaterialTheme.typography.titleMedium)
-                Text(task.destination_number, style = MaterialTheme.typography.bodyMedium)
+                Text(text = taskTypeLabel(task.task_type), variant = TextVariant.H4)
+                Text(text = task.destination_number)
             }
             TriplexButton(text = "Stop", onClick = onStop, style = TriplexButtonStyle.DANGER)
         }
@@ -308,17 +306,16 @@ internal fun ActiveTaskCard(
 
 @Composable
 private fun EmptyRunsCard() {
-    val spacing = TriplexDesign.spacing
+    val spacing = RikkaTheme.spacing
     TriplexCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(spacing.xLarge),
-            verticalArrangement = Arrangement.spacedBy(spacing.small),
+            modifier = Modifier.padding(spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
-            Text("No calls yet", style = MaterialTheme.typography.titleLarge)
+            Text(text = "No calls yet", variant = TextVariant.H3)
             Text(
                 text = "When the agent answers or places a call, the transcript appears here.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = RikkaTheme.colors.onMuted,
             )
         }
     }

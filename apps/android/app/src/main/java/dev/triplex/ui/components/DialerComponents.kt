@@ -21,6 +21,7 @@ import zed.rainxch.rikkaui.components.ui.button.Button
 import zed.rainxch.rikkaui.components.ui.button.ButtonAnimation
 import zed.rainxch.rikkaui.components.ui.button.ButtonSize
 import zed.rainxch.rikkaui.components.ui.button.ButtonVariant
+import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
 import zed.rainxch.rikkaui.components.ui.input.Input
@@ -87,7 +88,14 @@ fun TriplexListRow(
     onAction: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
 ) {
-    TriplexCard(modifier = modifier.fillMaxWidth(), onClick = onClick) {
+    // Subtle, not the default Regular: these repeat down a list, and a column of
+    // Regular slabs each casting its own shadow reads as a stack of floating
+    // panels instead of rows on one surface.
+    TriplexCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        level = GlassLevel.Subtle,
+    ) {
         Row(
             modifier = Modifier.padding(
                 horizontal = RikkaTheme.spacing.lg,

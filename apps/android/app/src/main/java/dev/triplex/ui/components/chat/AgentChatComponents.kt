@@ -26,7 +26,6 @@ import zed.rainxch.rikkaui.components.ui.glass.GlassSurface
 import zed.rainxch.rikkaui.components.ui.text.Text
 import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
-import dev.triplex.ui.theme.LiquidGlassDesign
 
 enum class Speaker {
     AGENT,
@@ -93,14 +92,17 @@ fun AgentChatMessage(
     entry: TranscriptEntry,
     modifier: Modifier = Modifier,
 ) {
-    val roles = LiquidGlassDesign.colors
+    val colors = RikkaTheme.colors
 
+    // Who is speaking is carried by hue, not by position alone: on a two-party
+    // call the agent's turns and the caller's turns both sit left, so alignment
+    // cannot separate three roles on its own.
     val tint =
         when (entry.speaker) {
-            Speaker.AGENT -> roles.timelineAgent
-            Speaker.CALLER -> roles.timelineCaller
-            Speaker.USER -> roles.timelineUser
-            Speaker.SYSTEM -> RikkaTheme.colors.muted
+            Speaker.AGENT -> colors.success
+            Speaker.CALLER -> colors.primary
+            Speaker.USER -> colors.secondary
+            Speaker.SYSTEM -> colors.muted
         }
 
     val alignment =
