@@ -165,6 +165,7 @@ class CallDialogue(
 
         private var reasonedTurns = 0
         private var reasonerFailures = 0
+
         var consecutiveFailures = 0
             private set
         private var fallbacksSpoken = 0
@@ -208,10 +209,17 @@ class CallDialogue(
         /** Closes the call because the wall-clock budget is spent. */
         suspend fun outOfTime(reasonerOverran: Boolean = false): DialogueOutcome {
             if (reasonerOverran) {
+                // Counted, not just logged. A model that ran the call out of
+                // time failed that turn as surely as one that threw, and an
+                // outcome reporting zero failures for a call the event stream
+                // says failed makes the two disagree — which means the run
+                // history and any metric built on it are both wrong.
+                reasonerFailures += 1
+                consecutiveFailures += 1
                 observer.onEvent(
                     DialogueEvent.ReasonerFailed(
                         turnNumber,
-                        consecutiveFailures + 1,
+                        consecutiveFailures,
                         "exceeded the call's remaining time budget",
                     )
                 )

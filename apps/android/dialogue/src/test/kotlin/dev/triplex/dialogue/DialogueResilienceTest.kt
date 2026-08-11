@@ -319,11 +319,15 @@ class DialogueResilienceTest {
 
         assertEquals(StopReason.TIME_BUDGET, outcome.stop)
         assertEquals(0, outcome.reasonedTurns, "the stalled turn never landed")
-        // The overrun is recorded as what it was, not as a silent stop.
-        assertContains(
-            observer.ofType<DialogueEvent.ReasonerFailed>().single().reason,
-            "remaining time budget",
-        )
+        // The overrun is recorded as what it was, not as a silent stop — and
+        // it is *counted*, so the outcome and the event stream agree. A run
+        // history reporting zero failures for a call that demonstrably failed
+        // is worse than no history.
+        val failure = observer.ofType<DialogueEvent.ReasonerFailed>().single()
+        assertContains(failure.reason, "remaining time budget")
+        assertEquals(1, failure.consecutive)
+        assertEquals(1, outcome.reasonerFailures)
+        assertFalse(outcome.completedCleanly)
         assertEquals(
             "Thank you. I have the details and I will pass them along. Goodbye.",
             transport.spoken.last(),

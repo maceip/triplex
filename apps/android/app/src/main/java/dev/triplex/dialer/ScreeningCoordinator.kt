@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import java.time.Instant
 import javax.inject.Inject
@@ -168,7 +170,12 @@ class ScreeningCoordinator @Inject constructor(
         // The *heartbeat* has to keep going even when nothing changes, because
         // the gateway expires a readiness claim that stops being restated.
         //
-        // So: one flow of the actual state, and a ticker merged into it.
+        // Both run through this one loop rather than two collectors. The
+        // gateway takes the last write, so two publishers racing can land a
+        // stale heartbeat *after* a fresh state change and undo it — leaving
+        // callers routed to a bridge that has gone away, until the next tick
+        // happens to correct it. One publisher, reading the current state at
+        // the moment it publishes, cannot invert its own writes.
         val state = combine(
             telephonyController.sipState,
             agentConfig.inbound,
@@ -178,32 +185,28 @@ class ScreeningCoordinator @Inject constructor(
                 ready = registered,
                 mediaReady = registered && inbound.bridgeCallsToPhone,
             )
-        }.distinctUntilChanged()
+        }.distinctUntilChanged().stateIn(this)
 
-        val heartbeat = flow {
-            while (true) {
-                delay(HEARTBEAT_INTERVAL_MS)
-                emit(Unit)
-            }
-        }
-
-        var latest: Readiness? = null
-        launch {
-            state.collect { readiness ->
-                latest = readiness
+        var published: Readiness? = null
+        while (true) {
+            // Read at publish time, never captured earlier: whatever is true
+            // now is what the gateway is told.
+            val current = state.value
+            if (current != published) {
                 Timber.i(
                     "Publishing readiness: ready=%s mediaReady=%s",
-                    readiness.ready,
-                    readiness.mediaReady,
+                    current.ready,
+                    current.mediaReady,
                 )
-                publish(readiness)
             }
-        }
-        launch {
-            heartbeat.collect {
-                // Restates whatever the current claim is. No log: a heartbeat
-                // that says the same thing every ninety seconds is noise.
-                latest?.let { publish(it) }
+            publish(current)
+            published = current
+
+            // Wake on the next change, or on the heartbeat, whichever is
+            // first. A heartbeat that says the same thing is not logged —
+            // ninety seconds of identical lines is noise.
+            withTimeoutOrNull(HEARTBEAT_INTERVAL_MS) {
+                state.first { it != current }
             }
         }
     }
