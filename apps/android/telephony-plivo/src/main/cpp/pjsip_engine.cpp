@@ -240,7 +240,9 @@ struct TriplexPjsipEngine {
   pj_pool_t *media_port_pool = nullptr;
   DirectMediaPort *media_port = nullptr;
   pjsua_conf_port_id media_port_slot = PJSUA_INVALID_ID;
-  std::array<pjsua_transport_id, 2> tls_transport_ids{
+  std::array<pjsua_transport_id, 4> tls_transport_ids{
+      PJSUA_INVALID_ID,
+      PJSUA_INVALID_ID,
       PJSUA_INVALID_ID,
       PJSUA_INVALID_ID,
   };
@@ -805,8 +807,18 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   if (status != PJ_SUCCESS) {
     return status;
   }
-  return pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
-                                &engine->tls_transport_ids[1]);
+  // IPv6 UDP is best-effort; consumer Wi‑Fi often has global IPv6 that Plivo
+  // can INVITE without hairpinning a NATed IPv4 Contact.
+  (void)pjsua_transport_create(PJSIP_TRANSPORT_UDP6, &transport_config,
+                               &engine->tls_transport_ids[1]);
+  status = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
+                                  &engine->tls_transport_ids[2]);
+  if (status != PJ_SUCCESS) {
+    return status;
+  }
+  (void)pjsua_transport_create(PJSIP_TRANSPORT_TLS6, &transport_config,
+                               &engine->tls_transport_ids[3]);
+  return PJ_SUCCESS;
 }
 
 pj_status_t create_media_port(TriplexPjsipEngine *engine) {
@@ -837,7 +849,6 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   pjsua_acc_config_default(&account_config);
   account_config.id = pj_str(engine->identity_uri.data());
   account_config.reg_uri = pj_str(engine->registrar_uri.data());
-  account_config.force_contact = pj_str(engine->force_contact_uri.data());
   account_config.reg_timeout = engine->registration_timeout_seconds;
   account_config.reg_first_retry_interval = 1;
   account_config.reg_retry_interval = 5;
@@ -847,18 +858,16 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ip_change_cfg.shutdown_tp = PJ_TRUE;
   account_config.ip_change_cfg.hangup_calls = PJ_FALSE;
   account_config.ip_change_cfg.reinv_use_update = PJ_TRUE;
-  account_config.ipv6_sip_use = PJSUA_IPV6_DISABLED;
-  account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
+  account_config.ipv6_sip_use = PJSUA_IPV6_ENABLED;
+  account_config.ipv6_media_use = PJSUA_IPV6_ENABLED;
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
   account_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
   account_config.srtp_secure_signaling = 0;
-  // Do not rewrite Contact to the NATed host:port. Plivo must route inbound
-  // INVITEs via the registration flow; advertising a consumer NAT mapping
-  // makes Call/Dial attempt a new connection that never completes
-  // (hangup_cause=Network Error).
-  account_config.allow_contact_rewrite = PJ_FALSE;
-  account_config.contact_rewrite_method = PJSUA_CONTACT_REWRITE_UNREGISTER;
-  account_config.contact_use_src_port = PJ_FALSE;
+  // Prefer rewritten Contact (IPv6 global when available) so Plivo Dial has a
+  // reachable binding. RFC5626 ;ob still advertised for flow reuse.
+  account_config.allow_contact_rewrite = PJ_TRUE;
+  account_config.contact_rewrite_method = PJSUA_CONTACT_REWRITE_ALWAYS_UPDATE;
+  account_config.contact_use_src_port = PJ_TRUE;
   account_config.use_rfc5626 = PJ_TRUE;
   account_config.ka_interval = 15;
   account_config.cred_count = 1;

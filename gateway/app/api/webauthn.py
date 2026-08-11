@@ -80,9 +80,7 @@ async def registration_start(
     if not settings.enrollment_enabled:
         raise HTTPException(status_code=403, detail="Enrollment is closed")
 
-    challenge = _generate_challenge()
     challenge_id = str(UUID(int=int.from_bytes(os.urandom(16), 'big')))
-
     user_id = UUID(int=int.from_bytes(os.urandom(16), 'big'))
 
     options = generate_registration_options(
@@ -103,7 +101,7 @@ async def registration_start(
 
     challenge_record = WebAuthnChallengeDB(
         id=challenge_id,
-        challenge=challenge,
+        challenge=urlsafe_b64encode(options.challenge).decode('utf-8').rstrip('='),
         email=data.email,
         challenge_type="registration",
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
@@ -141,9 +139,12 @@ async def registration_finish(
         raise HTTPException(status_code=400, detail="Invalid or expired challenge")
 
     try:
+        from base64 import urlsafe_b64decode
+        challenge_bytes = urlsafe_b64decode(challenge_record.challenge + '==')
+        
         verification = verify_registration_response(
             credential=data.credential,
-            expected_challenge=challenge_record.challenge.encode('utf-8'),
+            expected_challenge=challenge_bytes,
             expected_origin=_get_origin(),
             expected_rp_id=_get_rp_id(),
             require_user_verification=True,
@@ -211,18 +212,17 @@ async def login_start(
         for cred in credentials
     ]
 
-    challenge = _generate_challenge()
-    challenge_id = str(UUID(int=int.from_bytes(os.urandom(16), 'big')))
-
     options = generate_authentication_options(
         rp_id=_get_rp_id(),
         allow_credentials=allow_credentials,
         user_verification=UserVerificationRequirement.REQUIRED,
     )
 
+    challenge_id = str(UUID(int=int.from_bytes(os.urandom(16), 'big')))
+    
     challenge_record = WebAuthnChallengeDB(
         id=challenge_id,
-        challenge=challenge,
+        challenge=urlsafe_b64encode(options.challenge).decode('utf-8').rstrip('='),
         user_id=user.id,
         challenge_type="authentication",
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
@@ -274,12 +274,16 @@ async def login_finish(
         raise HTTPException(status_code=400, detail="Credential not found")
 
     try:
+        from base64 import urlsafe_b64decode
+        challenge_bytes = urlsafe_b64decode(challenge_record.challenge + '==')
+        public_key_bytes = urlsafe_b64decode(stored_credential.public_key + '==')
+        
         verification = verify_authentication_response(
             credential=data.credential,
-            expected_challenge=challenge_record.challenge.encode('utf-8'),
+            expected_challenge=challenge_bytes,
             expected_origin=_get_origin(),
             expected_rp_id=_get_rp_id(),
-            credential_public_key=stored_credential.public_key.encode('utf-8'),
+            credential_public_key=public_key_bytes,
             credential_current_sign_count=stored_credential.sign_count,
             require_user_verification=True,
         )
