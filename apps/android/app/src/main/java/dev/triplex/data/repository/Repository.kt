@@ -85,12 +85,19 @@ class UserRepository @Inject constructor(
         }
     }
 
-    suspend fun setDeviceReady(ready: Boolean): Result<Unit> {
+    /**
+     * @param mediaReady whether this phone will carry the caller's audio. The
+     *   gateway bridges inbound calls to the device only when this is set, so
+     *   it is passed explicitly at every call site rather than defaulted —
+     *   a caller silently connected to a device that cannot take media hears
+     *   an answered call and then nothing.
+     */
+    suspend fun setDeviceReady(ready: Boolean, mediaReady: Boolean): Result<Unit> {
         val token = storage.getDeviceToken() ?: return Result.Error("No device token")
-        
+
         return try {
-            api.setDeviceReady(ready, token)
-            Timber.i("Device ready status: $ready")
+            api.setDeviceReady(ready, mediaReady, token)
+            Timber.i("Device ready status: ready=$ready mediaReady=$mediaReady")
             Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to set device ready")

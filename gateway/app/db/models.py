@@ -120,6 +120,16 @@ class DeviceRegistrationDB(Base):
     sip_endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
     push_token: Mapped[Optional[str]] = mapped_column(String(255))
     ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: The device is registered to its SIP provider and would answer an INVITE.
+    #: This is *signaling* readiness and nothing more.
+    #:
+    #: Whether the device can also carry the caller's audio is a separate
+    #: question with a separate answer — see :attr:`media_ready`. The two were
+    #: one flag for as long as the answer to the second was always "no"; they
+    #: are split now because routing has to be able to tell them apart.
+    media_ready: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     last_heartbeat: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

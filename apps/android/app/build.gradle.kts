@@ -23,6 +23,9 @@ android {
 
     defaultConfig {
         applicationId = "dev.triplex"
+        // RikkaUI components (sibling composite / current tip) declare minSdk 33.
+        // The spike previously targeted API 29; keep telephony libraries at 29
+        // until the product floor is decided, but the UI shell must match RikkaUI.
         minSdk = 33
         targetSdk = 35
         versionCode = 1
@@ -57,10 +60,18 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    // CI sets -Ptriplex.skipNative=true so JVM unit tests can run without the
+    // PJSIP/Mbed TLS stage from apps/android/scripts/prepare-native.sh.
+    val skipNative = providers.gradleProperty("triplex.skipNative")
+        .getOrElse("false")
+        .equals("true", ignoreCase = true)
+
+    if (!skipNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -69,10 +80,12 @@ android {
             // Matches the prepared telephony native stage, which is arm64-only.
             abiFilters += listOf("arm64-v8a")
         }
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
-                arguments += listOf("-DANDROID_STL=c++_static")
+        if (!skipNative) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
+                    arguments += listOf("-DANDROID_STL=c++_static")
+                }
             }
         }
     }
@@ -114,6 +127,9 @@ kotlin {
 
 dependencies {
     implementation(project(":telephony-plivo"))
+    // The multi-turn conversation loop (apps/android/dialogue), consumed
+    // through the composite build wired in settings.gradle.kts.
+    implementation("dev.triplex:dialogue")
     implementation(project(":telemetry-client"))
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation("com.google.ai.edge.litert:litert:2.1.3")

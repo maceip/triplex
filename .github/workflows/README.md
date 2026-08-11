@@ -6,11 +6,22 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 
 ```
 .github/workflows/ci.yml
-├── allocation-guard      → RT zero-allocation soak tests (Rust counting allocator)
-├── transport-validation  → Gradle + Python validation suite (p50/p95/drops gates)
+├── allocation-guard      → RT zero-allocation soak tests (RtGuardAlloc)
+├── agent-core-tests      → Rust agent-core unit + integration tests
+├── transport-validation  → Kotlin suite + host C++ lifecycle + Python gates
 ├── gateway-validation    → FastAPI integration tests (PostgreSQL)
-├── android-build         → APK assembly + unit tests
+├── dialogue-tests        → Kotlin conversation-loop unit tests
+├── android-build         → JVM unit tests (native stage skipped in CI)
 └── evidence-gate         → Artifact collection & manifest verification
+
+Jobs above evidence-gate run independently (no needs: chain) so a red
+allocation guard cannot skip transport, gateway, or Android.
+
+Scripts live under `testlab/validation/` (not a top-level `scripts/` tree).
+Transport no longer pulls a non-existent `plivo/plivo-simulator` image.
+Android CI checkouts `triplex-analytics` + `RikkaUi` as siblings (JDK 21 for
+the RikkaUi composite / Paparazzi classpath) and runs with
+`-Ptriplex.skipNative=true` until `prepare-native.sh` is cached as an artifact.
 ```
 
 ## Jobs
@@ -20,10 +31,9 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 **Purpose**: Verify zero heap allocations on RT-tagged threads.
 
 **Implementation**:
-- Build native Rust library with `rt-alloc-counting` feature
-- Run `rt_alloc.rs` soak tests (10,000 iterations)
-- Run `vad_rt.rs` VAD-specific tests (1,000 frames)
-- Assert `allocation_count == 0`
+- Run `rt_alloc` and `vad_rt` integration tests via `--test` (not positional filters)
+- Use `RtGuardAlloc` + `tag_rt_thread` (same guard as agent-core)
+- Assert `rtguard::violations() == 0`
 
 **Artifacts**:
 - `allocation-report.json` - Total allocation events
@@ -35,12 +45,14 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 
 **Purpose**: Validate p50/p95 latency and packet drops against thresholds.
 
-**Gradle Task**: `:telephony-plivo:transportValidation`
+**Gradle / host steps**:
+- `:telephony-plivo:testDebugUnitTest` (writes CI_MOCK kotlin suite JSON)
+- Host CMake build of `telephony-plivo/src/test/cpp` lifecycle tests
 
-**Python Scripts**:
-- `compare.py --mode=simulated` - Network simulation
-- `compare.py --mode=kotlin` - Kotlin coroutine tests
-- `compare.py --mode=cpp` - Native C++ transport tests
+**Python Scripts** (`testlab/validation/`):
+- `compare.py --mode=simulated` - Network simulation (seeded, gate-stable)
+- `compare.py --mode=kotlin` - Maps kotlin suite artifact → latency schema
+- `compare.py --mode=cpp` - Maps C++ suite artifact → latency schema
 - `validate_gates.py` - Enforce thresholds
 
 **Gates** (p95 release objectives):
@@ -73,15 +85,16 @@ Automated workflow enforcing real-time performance guarantees and transport vali
 
 ### 4. Android Build
 
-**Purpose**: Build APK and run unit tests.
+**Purpose**: Run Android JVM unit tests with sibling design-system deps.
 
 **Tasks**:
-- `:app:assembleDebug`
+- `:telephony-plivo:testDebugUnitTest`
 - `:app:testDebugUnitTest`
+- Native CMake skipped via `-Ptriplex.skipNative=true` (full APK assemble still
+  requires `apps/android/scripts/prepare-native.sh` locally)
 
 **Artifacts**:
-- `app-debug.apk`
-- Test reports
+- Test reports / test-results (flattened for the evidence gate)
 
 ### 5. Evidence Gate
 
@@ -122,7 +135,11 @@ All evidence files must conform to schemas before archiving.
 ```bash
 # Run allocation guard tests
 cd apps/android/native-media
-cargo test --features rt-alloc-counting -- --nocapture
+cargo test --release --test rt_alloc --test vad_rt -- --nocapture
+
+# Run agent-core tests
+cd apps/android/agent
+cargo test --all-targets
 
 # Run transport validation
 ./gradlew :telephony-plivo:transportValidation

@@ -39,7 +39,9 @@ class EnrollmentViewModel @Inject constructor(
     }
 
     private suspend fun trySetReady() {
-        val result = userRepository.setDeviceReady(true)
+        // Enrollment has no SIP endpoint yet, let alone a media path;
+        // ScreeningCoordinator makes the media claim once one exists.
+        val result = userRepository.setDeviceReady(ready = true, mediaReady = false)
         when (result) {
             is Result.Success -> {
                 _state.value = _state.value.copy(

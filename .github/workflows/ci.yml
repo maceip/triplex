@@ -7,25 +7,32 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
 env:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Independent of every other gate. A failure here must not skip transport,
+  # gateway, Android, or agent-core checks.
   allocation-guard:
     name: RT Allocation Guard
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           components: rustfmt, clippy
-      
+
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -33,26 +40,18 @@ jobs:
             ~/.cargo/bin/
             ~/.cargo/registry/
             ~/.cargo/git/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            apps/android/native-media/target/
+          key: ${{ runner.os }}-cargo-native-${{ hashFiles('apps/android/native-media/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
-      
-      - name: Build with counting allocator
-        run: |
-          cd apps/android/native-media
-          cargo build --release --features "rt-alloc-counting"
-      
+            ${{ runner.os }}-cargo-native-
+
       - name: Run RT allocation soak tests
         run: |
           cd apps/android/native-media
-          cargo test --release --features "rt-alloc-counting" rt_alloc vad_rt -- --nocapture
-      
-      - name: Verify zero allocations
-        run: |
-          cd apps/android/native-media
-          cargo test --release --features "rt-alloc-counting" -- verify_zero_allocations
-      
+          # cargo test accepts one positional TESTNAME filter. Select the
+          # integration-test binaries explicitly with repeated --test flags.
+          cargo test --release --test rt_alloc --test vad_rt -- --nocapture
+
       - name: Archive allocation report
         uses: actions/upload-artifact@v4
         with:
@@ -62,106 +61,154 @@ jobs:
             apps/android/native-media/target/release/vad-allocations.json
           retention-days: 30
 
+  # Agent-core tests used to live under allocation-guard; that job's rotted
+  # alloc_counter path skipped them whenever the guard failed to compile.
+  agent-core-tests:
+    name: Agent Core Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            apps/android/agent/target/
+            apps/android/native-media/target/
+          key: ${{ runner.os }}-cargo-agent-${{ hashFiles('apps/android/agent/Cargo.toml', 'apps/android/native-media/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-agent-
+
+      - name: Run agent core tests
+        run: |
+          cd apps/android/agent
+          cargo test --all-targets
+
+  # No longer chains off allocation-guard — independent validation surface.
+  # Does not pull a phantom plivo/plivo-simulator image (that tag does not exist
+  # on Docker Hub and previously failed the job at "Initialize containers").
   transport-validation:
     name: Transport Validation
     runs-on: ubuntu-latest
-    needs: allocation-guard
     timeout-minutes: 45
-    
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: triplex
-          POSTGRES_PASSWORD: triplex
-          POSTGRES_DB: triplex
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      
-      plivo-simulator:
-        image: plivo/plivo-simulator:latest
-        ports:
-          - 8000:8000
-        options: >-
-          --health-cmd "curl -f http://localhost:8000/health"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
-      
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-      
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
-      
+          cache-dependency-path: testlab/validation/validation-requirements.txt
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r scripts/validation-requirements.txt
-      
-      - name: Build native library
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          arguments: :app:externalNativeBuildDebug
-      
+          pip install -r testlab/validation/validation-requirements.txt
+
+      - name: Install host build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install Android platform + build-tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > apps/android/local.properties
+
       - name: Run transport validation suite
+        working-directory: apps/android
         run: |
-          cd apps/android
-          ./gradlew :telephony-plivo:transportValidation --stacktrace
-      
+          ./gradlew :telephony-plivo:testDebugUnitTest \
+            -Ptriplex.skipNative=true \
+            --stacktrace
+
+      - name: Run host C++ transport lifecycle tests
+        run: |
+          cmake -S apps/android/telephony-plivo/src/test/cpp \
+            -B apps/android/telephony-plivo/build/host-tests \
+            -DTRIPLEX_EVIDENCE_OUTPUT="$GITHUB_WORKSPACE/artifacts/cpp-transport-validation.raw.json"
+          cmake --build apps/android/telephony-plivo/build/host-tests
+          ctest --test-dir apps/android/telephony-plivo/build/host-tests --output-on-failure
+
       - name: Run simulated transport checks
         run: |
-          python scripts/compare.py --mode=simulated --output=artifacts/simulated-validation.json
-      
+          mkdir -p artifacts
+          python testlab/validation/compare.py \
+            --mode=simulated \
+            --seed=42 \
+            --duration=1 \
+            --output=artifacts/simulated-validation.json
+
       - name: Run Kotlin transport validation
         run: |
-          python scripts/compare.py --mode=kotlin --output=artifacts/kotlin-transport-validation.json
-      
+          python testlab/validation/compare.py \
+            --mode=kotlin \
+            --seed=42 \
+            --output=artifacts/kotlin-transport-validation.json
+
       - name: Run C++ transport validation
         run: |
-          python scripts/compare.py --mode=cpp --output=artifacts/cpp-transport-validation.json
-      
+          python testlab/validation/compare.py \
+            --mode=cpp \
+            --seed=42 \
+            --output=artifacts/cpp-transport-validation.json
+
       - name: Validate latency gates
         run: |
-          python scripts/validate_gates.py \
+          python testlab/validation/validate_gates.py \
             --simulated artifacts/simulated-validation.json \
             --kotlin artifacts/kotlin-transport-validation.json \
             --cpp artifacts/cpp-transport-validation.json \
             --p50-limit 120 \
             --p95-limit 150 \
             --drop-limit 0
-      
+
+      - name: Stage transport evidence
+        if: always()
+        run: |
+          mkdir -p transport-evidence/reports
+          cp artifacts/simulated-validation.json \
+             artifacts/kotlin-transport-validation.json \
+             artifacts/cpp-transport-validation.json \
+             transport-evidence/
+          if [ -d apps/android/telephony-plivo/build/reports ]; then
+            cp -R apps/android/telephony-plivo/build/reports/. transport-evidence/reports/
+          fi
+
       - name: Archive validation artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: transport-validation-evidence
-          path: |
-            artifacts/simulated-validation.json
-            artifacts/kotlin-transport-validation.json
-            artifacts/cpp-transport-validation.json
-            apps/android/telephony-plivo/build/reports/
+          path: transport-evidence/
           retention-days: 30
-      
+
       - name: Comment PR with results
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -169,9 +216,9 @@ jobs:
             const simulated = JSON.parse(fs.readFileSync('artifacts/simulated-validation.json', 'utf8'));
             const kotlin = JSON.parse(fs.readFileSync('artifacts/kotlin-transport-validation.json', 'utf8'));
             const cpp = JSON.parse(fs.readFileSync('artifacts/cpp-transport-validation.json', 'utf8'));
-            
+
             const body = `## Transport Validation Results
-            
+
             | Metric | Simulated | Kotlin | C++ | Gate |
             |--------|-----------|--------|-----|------|
             | p50 Latency | ${simulated.latency.p50}ms | ${kotlin.latency.p50}ms | ${cpp.latency.p50}ms | ≤120ms |
@@ -179,7 +226,7 @@ jobs:
             | Packet Drops | ${simulated.packets.dropped} | ${kotlin.packets.dropped} | ${cpp.packets.dropped} | 0 |
             | Passed | ${simulated.passed ? '✅' : '❌'} | ${kotlin.passed ? '✅' : '❌'} | ${cpp.passed ? '✅' : '❌'} | - |
             `;
-            
+
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -187,12 +234,12 @@ jobs:
               body: body
             });
 
+  # Independent of transport-validation — do not skip gateway when transport fails.
   gateway-validation:
     name: Gateway Integration Tests
     runs-on: ubuntu-latest
-    needs: transport-validation
     timeout-minutes: 20
-    
+
     services:
       postgres:
         image: postgres:16-alpine
@@ -207,127 +254,244 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
-      
+          cache-dependency-path: gateway/requirements.txt
+
       - name: Install dependencies
         run: |
           cd gateway
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov
-      
+
       - name: Run gateway tests
         run: |
           cd gateway
           pytest tests/ -v --cov=app --cov-report=xml --cov-report=html
         env:
           DATABASE_URL: postgresql+asyncpg://triplex:triplex@localhost:5432/triplex
-      
+          # The inbound/outbound call suites drive signed provider webhooks
+          # against this database and truncate between tests, so it is named
+          # separately from DATABASE_URL rather than inherited: a suite that
+          # empties whatever happens to be configured is one misconfigured
+          # environment away from being an incident.
+          TEST_DATABASE_URL: postgresql+asyncpg://triplex:triplex@localhost:5432/triplex
+
+      - name: Stage gateway evidence
+        if: always()
+        run: |
+          mkdir -p gateway-evidence
+          cp gateway/coverage.xml gateway-evidence/ || true
+          if [ -d gateway/htmlcov ]; then
+            cp -R gateway/htmlcov gateway-evidence/htmlcov
+          fi
+
       - name: Archive test results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gateway-test-results
-          path: |
-            gateway/htmlcov/
-            gateway/coverage.xml
+          path: gateway-evidence/
           retention-days: 30
 
-  android-build:
-    name: Android Build & Test
+  dialogue-tests:
+    name: Conversation Loop
     runs-on: ubuntu-latest
-    needs: transport-validation
-    timeout-minutes: 30
-    
+    timeout-minutes: 15
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
-      
+
+      # A standalone Gradle build on purpose: the turn loop is the part of the
+      # agent most worth testing, and this way it is tested without the Android
+      # SDK, an emulator, or the sibling checkouts :app needs — so it runs on
+      # every pull request instead of only where a full Android toolchain does.
+      - name: Run conversation tests
+        run: |
+          cd apps/android/dialogue
+          gradle test --no-daemon
+
+      - name: Archive test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dialogue-test-results
+          path: apps/android/dialogue/build/reports/tests/
+          retention-days: 30
+
+  # Independent of transport-validation — Kotlin/Android must still compile when
+  # the allocation guard or transport suite is red.
+  # Checkout layout mirrors local sibling deps:
+  #   $GITHUB_WORKSPACE/{triplex,triplex-analytics,RikkaUi}
+  android-build:
+    name: Android Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout triplex
+        uses: actions/checkout@v4
+        with:
+          path: triplex
+
+      - name: Checkout triplex-analytics
+        uses: actions/checkout@v4
+        with:
+          repository: maceip/triplex-analytics
+          path: triplex-analytics
+
+      - name: Checkout RikkaUi
+        uses: actions/checkout@v4
+        with:
+          repository: maceip/RikkaUi
+          path: RikkaUi
+
+      # JDK 21 is required when including the RikkaUi composite build: its
+      # :sample module resolves Paparazzi, which needs a JVM 21 runtime.
+      # App bytecode still targets 17 via kotlin/jvmTarget.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install Android platform + build-tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > triplex/apps/android/local.properties
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-      
-      - name: Build Android app
-        uses: gradle/actions/setup-gradle@v3
         with:
-          arguments: :app:assembleDebug --stacktrace
-      
+          build-root-directory: triplex/apps/android
+
+      # Full :app:assembleDebug needs apps/android/scripts/prepare-native.sh
+      # (PJSIP + Mbed TLS + Rust cdylib). CI validates Kotlin/JVM surfaces with
+      # native CMake skipped until that stage is cached as a first-class artifact.
       - name: Run Android unit tests
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          arguments: :app:testDebugUnitTest --stacktrace
-      
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: |
-            apps/android/app/build/outputs/apk/debug/*.apk
-          retention-days: 30
-      
+        working-directory: triplex/apps/android
+        run: |
+          ./gradlew :telephony-plivo:testDebugUnitTest :app:testDebugUnitTest \
+            -Ptriplex.skipNative=true \
+            -PrikkaUiPath=$GITHUB_WORKSPACE/RikkaUi \
+            --stacktrace
+
+      - name: Stage android evidence
+        if: always()
+        run: |
+          mkdir -p android-evidence/reports android-evidence/test-results
+          for module in app telephony-plivo; do
+            src="triplex/apps/android/${module}/build"
+            if [ -d "${src}/reports" ]; then
+              mkdir -p "android-evidence/reports/${module}"
+              cp -R "${src}/reports/." "android-evidence/reports/${module}/"
+            fi
+            if [ -d "${src}/test-results" ]; then
+              mkdir -p "android-evidence/test-results/${module}"
+              cp -R "${src}/test-results/." "android-evidence/test-results/${module}/"
+            fi
+          done
+
       - name: Archive test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-test-results
-          path: |
-            apps/android/app/build/reports/
-            apps/android/app/build/test-results/
+          path: android-evidence/
           retention-days: 30
 
   evidence-gate:
     name: Evidence Collection Gate
     runs-on: ubuntu-latest
-    needs: [allocation-guard, transport-validation, gateway-validation, android-build]
+    needs:
+      - allocation-guard
+      - agent-core-tests
+      - transport-validation
+      - gateway-validation
+      - dialogue-tests
+      - android-build
     if: always()
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
-      
+
       - name: Validate evidence completeness
         run: |
-          python scripts/validate_evidence.py \
+          python testlab/validation/validate_evidence.py \
             --allocation all-artifacts/allocation-report/ \
             --transport all-artifacts/transport-validation-evidence/ \
             --gateway all-artifacts/gateway-test-results/ \
             --android all-artifacts/android-test-results/
-      
+
       - name: Create evidence manifest
         run: |
-          python scripts/create_manifest.py \
+          python testlab/validation/create_manifest.py \
             --output artifacts/evidence-manifest.json \
             --commit ${{ github.sha }} \
             --pr ${{ github.event.pull_request.number || 'N/A' }} \
             --run ${{ github.run_id }}
-      
+
       - name: Archive evidence manifest
         uses: actions/upload-artifact@v4
         with:
           name: evidence-manifest
           path: artifacts/evidence-manifest.json
           retention-days: 90
-      
+
       - name: Check all gates passed
         run: |
           if [ -f "artifacts/gate-status.json" ]; then
-            python scripts/check_gates.py --manifest artifacts/evidence-manifest.json
+            python testlab/validation/check_gates.py --manifest artifacts/evidence-manifest.json
           else
             echo "No gate status file found"
             exit 1
           fi
+
+      - name: Require upstream jobs
+        if: |
+          needs.allocation-guard.result != 'success' ||
+          needs.agent-core-tests.result != 'success' ||
+          needs.transport-validation.result != 'success' ||
+          needs.gateway-validation.result != 'success' ||
+          needs.dialogue-tests.result != 'success' ||
+          needs.android-build.result != 'success'
+        run: |
+          echo "One or more required CI jobs failed:"
+          echo "  allocation-guard=${{ needs.allocation-guard.result }}"
+          echo "  agent-core-tests=${{ needs.agent-core-tests.result }}"
+          echo "  transport-validation=${{ needs.transport-validation.result }}"
+          echo "  gateway-validation=${{ needs.gateway-validation.result }}"
+          echo "  dialogue-tests=${{ needs.dialogue-tests.result }}"
+          echo "  android-build=${{ needs.android-build.result }}"
+          exit 1

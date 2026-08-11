@@ -68,6 +68,13 @@ class AgentConfigRepository @Inject constructor(
         put(KEY_QUICK_REPLIES, AgentConfigCodec.encodeList(cleaned))
     }
 
+    /**
+     * Turns the media handoff on. See [AgentInboundConfig.bridgeCallsToPhone]
+     * for why this is not on by default.
+     */
+    suspend fun setBridgeCallsToPhone(enabled: Boolean) =
+        put(KEY_BRIDGE_CALLS, enabled.toString())
+
     suspend fun setConfirmBeforeDial(enabled: Boolean) =
         put(KEY_CONFIRM_BEFORE_DIAL, enabled.toString())
 
@@ -123,6 +130,7 @@ class AgentConfigRepository @Inject constructor(
         const val KEY_ENABLED_AUTOMATIONS = "inbound.enabledAutomationIds"
         const val KEY_INBOUND_VOICE_POLICY = "inbound.voicePolicy"
         const val KEY_QUICK_REPLIES = "inbound.quickReplies"
+        const val KEY_BRIDGE_CALLS = "inbound.bridgeCallsToPhone"
         const val KEY_OUTBOUND_VOICE_POLICY = "outbound.defaultVoicePolicy"
         const val KEY_CONFIRM_BEFORE_DIAL = "outbound.confirmBeforeDial"
     }

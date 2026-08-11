@@ -39,6 +39,13 @@ class GatewaySettings(BaseSettings):
     webhook_rate_limit: str = Field(min_length=3)
     route_rate_limit: str = Field(min_length=3)
 
+    #: How long a device's readiness claim is believed after its last check-in.
+    #: Readiness is a statement about now: a phone that has been off since
+    #: Tuesday still has ``ready = true`` in the row it wrote before it went
+    #: away, and both inbound routing and outbound grants would otherwise trust
+    #: it. Bounded to an hour because anything longer is not a heartbeat.
+    device_heartbeat_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+
     database_startup_attempts: int = Field(ge=1, le=12)
     database_backoff_min_seconds: float = Field(gt=0, le=30)
     database_backoff_max_seconds: float = Field(gt=0, le=120)

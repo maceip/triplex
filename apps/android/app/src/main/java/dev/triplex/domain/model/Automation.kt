@@ -25,13 +25,22 @@ data class AutomationTemplate(
      * whose opening is generated from the task parameters instead.
      */
     val opening: String = "",
-    val acknowledgementPrefix: String = "",
-    val acknowledgementSuffix: String = "",
-) {
-    /** Closing line once the caller has answered, wrapped around [summary]. */
-    fun acknowledgement(summary: String): String =
-        acknowledgementPrefix + summary + acknowledgementSuffix
-}
+    /**
+     * What this automation is for, in the second person, handed to the
+     * reasoner as part of the call's brief.
+     *
+     * This replaced a fixed acknowledgement line. The old shape was
+     * opening → listen once → read the caller's words back, which cannot ask a
+     * follow-up question and so cannot actually book anything; the caller who
+     * said "Thursday" was told "I recorded: Thursday" and the call ended. The
+     * automation is now a brief for a real conversation
+     * (`dev.triplex.dialogue.DialogueBrief`), which is why the strings here
+     * describe a goal instead of a script.
+     */
+    val goal: String = "",
+    /** The details the automation exists to collect, in asking order. */
+    val collect: List<String> = emptyList(),
+)
 
 object AutomationCatalog {
     val ReturnSamsungItem = AutomationTemplate(
@@ -48,11 +57,10 @@ object AutomationCatalog {
         description = "Find a time that works and collect the invitation details",
         direction = AutomationDirection.INBOUND,
         voicePolicy = AutomationVoicePolicy.CLONED,
-        opening = "I can help arrange a Zoom meeting. Please tell me the day, time, " +
-            "time zone, and email address you want to use.",
-        acknowledgementPrefix = "Thank you. I recorded your proposed meeting details: ",
-        acknowledgementSuffix = ". The account owner will confirm availability before " +
-            "an invitation is sent.",
+        opening = "I can help arrange a Zoom meeting. What day works for you?",
+        goal = "arrange a Zoom meeting with the owner, who will confirm before any " +
+            "invitation is sent.",
+        collect = listOf("day", "time", "time zone", "email address"),
     )
 
     val ExplainDelay = AutomationTemplate(
@@ -61,10 +69,9 @@ object AutomationCatalog {
         description = "Give a polite update and ask whether anything should be passed along",
         direction = AutomationDirection.INBOUND,
         voicePolicy = AutomationVoicePolicy.CLONED,
-        opening = "I can take a message about the delay. Please tell me who the update " +
-            "is for and anything else that should be passed along.",
-        acknowledgementPrefix = "Thank you. I recorded this update: ",
-        acknowledgementSuffix = ". I will pass it along.",
+        opening = "I can take a message about the delay. Who is the update for?",
+        goal = "take an accurate message about a delay and pass it on.",
+        collect = listOf("who the update is for", "what should be passed along"),
     )
 
     val inbound = listOf(BookZoomMeeting, ExplainDelay)

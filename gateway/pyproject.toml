@@ -41,5 +41,5 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "tests"]
 asyncio_mode = "auto"

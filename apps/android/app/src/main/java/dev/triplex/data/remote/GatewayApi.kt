@@ -71,6 +71,12 @@ data class RegisterDeviceRequest(
 data class DeviceStatusResponse(
     val ready: Boolean,
     val sip_endpoint: String? = null,
+    /**
+     * Whether the gateway will send inbound callers straight to this phone.
+     * When false the caller is screened by the provider instead — a different
+     * experience, not a degraded one, so the UI can say which will happen.
+     */
+    val media_ready: Boolean = false,
 )
 
 @Serializable
@@ -156,10 +162,23 @@ class GatewayApi @Inject constructor(
         }.body()
     }
 
-    suspend fun setDeviceReady(ready: Boolean, deviceToken: String) {
+    /**
+     * Tells the gateway what this phone can do right now.
+     *
+     * [mediaReady] is the one that changes where a caller ends up: with it set
+     * the gateway connects inbound calls straight to this device's SIP
+     * endpoint, and without it the caller is screened by the provider instead.
+     * It is a separate claim from [ready] because registering with the SIP
+     * provider and being able to carry a stranger's audio are separate facts,
+     * and only the phone knows the second one.
+     */
+    suspend fun setDeviceReady(ready: Boolean, mediaReady: Boolean, deviceToken: String) {
         client.post("/devices/ready") {
             header("X-Device-Token", deviceToken)
-            url { parameters.append("ready", ready.toString()) }
+            url {
+                parameters.append("ready", ready.toString())
+                parameters.append("media_ready", mediaReady.toString())
+            }
         }
     }
 
