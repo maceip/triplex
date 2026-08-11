@@ -1,5 +1,6 @@
 package dev.triplex.dialogue
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -265,6 +266,99 @@ class DialogueResilienceTest {
             "Thank you. I have the details and I will pass them along. Goodbye.",
             transport.spoken.last(),
         )
+    }
+
+    /**
+     * The budget has to bound the *blocking* steps, not just be sampled
+     * between them. A transport whose silence timeout is longer than the time
+     * left in the call would otherwise spend all of it waiting, and the
+     * ceiling would be advisory.
+     */
+    @Test
+    fun a_caller_who_goes_quiet_cannot_outlast_the_remaining_budget() = runTest {
+        val clock = TestClock()
+        val transport = object : DialogueTransport {
+            val spoken = mutableListOf<String>()
+            var listenCalls = 0
+            override fun isActive(): Boolean = true
+            override suspend fun speak(text: String): SpeechResult {
+                spoken += text
+                return SpeechResult.DELIVERED
+            }
+            override suspend fun awaitCallerReply(): String? {
+                listenCalls += 1
+                // The transport's own timeout: far longer than the call has left.
+                delay(45_000)
+                return null
+            }
+        }
+
+        val outcome = CallDialogue(ReplayReasoner(nano), transport, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(1, transport.listenCalls)
+        // It still said something before hanging up.
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+    }
+
+    /** A model that stalls is dead air, and dead air is what the budget is for. */
+    @Test
+    fun a_reasoner_that_stalls_past_the_budget_closes_the_call() = runTest {
+        val clock = TestClock()
+        val transport = ScriptedCaller(caller)
+        // First reply takes two minutes; the call is allowed five seconds.
+        val reasoner = ReplayReasoner(nano, latencyMs = 120_000L)
+        val observer = RecordingObserver()
+
+        val outcome = CallDialogue(reasoner, transport, observer, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(0, outcome.reasonedTurns, "the stalled turn never landed")
+        // The overrun is recorded as what it was, not as a silent stop — and
+        // it is *counted*, so the outcome and the event stream agree. A run
+        // history reporting zero failures for a call that demonstrably failed
+        // is worse than no history.
+        val failure = observer.ofType<DialogueEvent.ReasonerFailed>().single()
+        assertContains(failure.reason, "remaining time budget")
+        assertEquals(1, failure.consecutive)
+        assertEquals(1, outcome.reasonerFailures)
+        assertFalse(outcome.completedCleanly)
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+    }
+
+    /**
+     * The opening goes out before the availability probe so the caller hears a
+     * greeting instead of silence — but that means a DOWNLOADABLE Nano that
+     * starts a long download inside `available()` can still leave them waiting
+     * after they have already been spoken to. The probe shares the same
+     * remaining-budget cap as listen/reply.
+     */
+    @Test
+    fun an_availability_probe_that_stalls_past_the_budget_closes_the_call() = runTest {
+        val clock = TestClock()
+        val transport = ScriptedCaller(caller)
+        val reasoner = ReplayReasoner(nano, availabilityLatencyMs = 120_000L)
+
+        val outcome = CallDialogue(reasoner, transport, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(1, reasoner.availabilityChecks)
+        assertEquals(0, outcome.reasonedTurns, "no turn starts if availability never returns")
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+        // Opening was delivered before the probe; only then did the budget bind.
+        assertEquals("Hi, Triplex screening assistant.", transport.spoken.first())
     }
 
     /** One instance serves consecutive calls; state must not leak between them. */

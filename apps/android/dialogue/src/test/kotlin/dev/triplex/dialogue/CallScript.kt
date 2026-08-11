@@ -122,6 +122,12 @@ class ReplayReasoner(
     private val availabilityThrows: Boolean = false,
     /** Recorded first-token latency, so turn timing is exercised. */
     private val latencyMs: Long = 0L,
+    /**
+     * How long [available] blocks before answering. Models the production
+     * path that starts a multi-hundred-megabyte Nano download when the
+     * feature is only DOWNLOADABLE.
+     */
+    private val availabilityLatencyMs: Long = 0L,
 ) : CallReasoner {
 
     /** Every (instructions, callerText, history) the loop actually sent. */
@@ -139,6 +145,7 @@ class ReplayReasoner(
 
     override suspend fun available(): Boolean {
         availabilityChecks += 1
+        if (availabilityLatencyMs > 0) delay(availabilityLatencyMs)
         if (availabilityThrows) error("AICore feature status unavailable")
         return availableResult
     }

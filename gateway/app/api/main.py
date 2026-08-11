@@ -37,6 +37,7 @@ from tenacity import (
 
 from ..config import settings
 from ..db.models import Base, ScreeningSessionDB, SipCredentialDB, VoiceProfileDB
+from ..db.schema_sync import sync_additive_columns
 from ..models.schemas import (
     DeviceRegistration,
     TaskDefinition,
@@ -44,6 +45,7 @@ from ..models.schemas import (
     UserAccount,
 )
 from ..services import AuditService, AuthService, RoutingService, TaskService
+from ..services.routing import InboundDecision
 from .webauthn import (
     RegistrationStartRequest,
     RegistrationStartResponse,
@@ -107,8 +109,27 @@ async def get_current_user_id(
     reraise=True,
 )
 async def _initialize_database() -> None:
+    """Create missing tables, then add missing columns to the ones that exist.
+
+    The second half matters as much as the first. `create_all` skips a table it
+    finds, so a column added to a model never reaches a database that already
+    has that table — and every ORM query then names a column the database does
+    not have. See `app.db.schema_sync` for why this is narrow and what should
+    replace it.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        result = await conn.run_sync(
+            lambda sync_conn: sync_additive_columns(sync_conn, Base.metadata)
+        )
+    for change in result.applied:
+        logger.warning("schema updated: added %s.%s", change.table, change.column)
+    for change in result.unsafe:
+        logger.error(
+            "schema is behind the models: %s.%s must be added by hand",
+            change.table,
+            change.column,
+        )
 
 
 @asynccontextmanager
@@ -312,12 +333,21 @@ async def register_user(
 async def register_device(
     request: RegisterDeviceRequest,
     user_id: UUID = Depends(get_current_user_id),
+    device_token: str = Header(..., alias="X-Device-Token"),
     db: AsyncSession = Depends(get_db),
 ):
+    """Attach this phone's SIP endpoint to the token it is already using.
+
+    The token is not rotated here. It used to be, and the app never learned
+    the new one — so the endpoint went onto a row nobody would ever mark ready,
+    and readiness went onto a row with no endpoint. Registration updates the
+    caller's own row.
+    """
+    if not request.sip_endpoint.strip():
+        raise HTTPException(status_code=422, detail="sip_endpoint must not be empty")
     auth_service = AuthService(db)
-    device_token = await auth_service.generate_device_token(user_id)
     device = await auth_service.register_device(
-        user_id, device_token, request.sip_endpoint, request.push_token
+        user_id, device_token, request.sip_endpoint.strip(), request.push_token
     )
     return device
 
@@ -325,15 +355,26 @@ async def register_device(
 @app.post("/devices/ready")
 async def set_device_ready(
     ready: bool,
+    media_ready: bool = Query(
+        default=False,
+        description=(
+            "The device can carry the caller's audio, not merely accept the "
+            "INVITE. Setting this is what moves an inbound call from provider "
+            "screening to a direct bridge, so it defaults to false: a device "
+            "that does not say it can take media does not get handed any."
+        ),
+    ),
     user_id: UUID = Depends(get_current_user_id),
     device_token: str = Header(..., alias="X-Device-Token"),
     db: AsyncSession = Depends(get_db),
 ):
     auth_service = AuthService(db)
-    success = await auth_service.set_device_ready(device_token, ready)
+    success = await auth_service.set_device_ready(
+        device_token, ready, media_ready=media_ready
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Device not found")
-    return {"ready": ready}
+    return {"ready": ready, "media_ready": ready and media_ready}
 
 
 @app.get("/devices/status")
@@ -341,9 +382,16 @@ async def get_device_status(
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    routing_service = RoutingService(db)
-    endpoint = await routing_service.get_device_endpoint(user_id)
-    return {"ready": endpoint is not None, "sip_endpoint": endpoint}
+    route = await _routing_service(db).get_device_route(user_id)
+    return {
+        "ready": route is not None,
+        "sip_endpoint": route.sip_endpoint if route else None,
+        # Reported separately so the app can say, on screen, which of the two
+        # products the next inbound call will get: a bridged agent call or a
+        # screened one.
+        "media_ready": bool(route and route.media_ready),
+        "last_heartbeat": route.last_heartbeat if route else None,
+    }
 
 
 @app.post("/admin/sip-credentials", response_model=SipCredentialsResponse)
@@ -691,6 +739,13 @@ def _outbound_route_service(db: AsyncSession) -> OutboundRouteService:
         signing_key=settings.outbound_route_signing_key.get_secret_value(),
         ttl_seconds=settings.outbound_route_ttl_seconds,
         sip_domain=settings.plivo_sip_domain,
+        device_heartbeat_ttl_seconds=settings.device_heartbeat_ttl_seconds,
+    )
+
+
+def _routing_service(db: AsyncSession) -> RoutingService:
+    return RoutingService(
+        db, heartbeat_ttl_seconds=settings.device_heartbeat_ttl_seconds
     )
 
 
@@ -797,17 +852,33 @@ async def plivo_answer(
     caller_id = str(form_data.get("From", ""))
     call_uuid = str(form_data.get("CallUUID", ""))
 
-    routing_service = RoutingService(db)
-    user_id = await routing_service.get_number_assignment(called_number)
-    sip_endpoint = (
-        await routing_service.get_device_endpoint(user_id) if user_id is not None else None
-    )
-    if user_id is None or sip_endpoint is None or not call_uuid:
-        xml_response = routing_service.generate_unavailable_xml(
-            settings.unavailable_message
+    routing_service = _routing_service(db)
+    routing = await routing_service.decide_inbound(called_number)
+    decision, user_id, route = routing.decision, routing.user_id, routing.route
+
+    # A provider callback with no call UUID cannot be tracked through a
+    # screening session, so it is not screened — it is answered honestly.
+    if decision is InboundDecision.SCREEN_CALLER and not call_uuid:
+        decision = InboundDecision.UNAVAILABLE
+
+    if decision is InboundDecision.BRIDGE_TO_DEVICE and route is not None:
+        # The device says it can carry the caller's audio: hand the call over
+        # and get out of the way. Nothing in this service is in the media path
+        # from here, which is the whole point of the handoff.
+        xml_response = routing_service.generate_bridge_to_device_xml(
+            route.sip_endpoint, caller_id
         )
-        decision = "unavailable"
-    else:
+        if user_id is not None:
+            await AuditService(db).log(
+                user_id,
+                "inbound_bridged_to_device",
+                {
+                    "call_uuid": call_uuid,
+                    "sip_endpoint": route.sip_endpoint,
+                    "called_number": called_number,
+                },
+            )
+    elif decision is InboundDecision.SCREEN_CALLER and route is not None and user_id is not None:
         session = await db.get(ScreeningSessionDB, call_uuid)
         if session is None:
             session = ScreeningSessionDB(
@@ -815,27 +886,36 @@ async def plivo_answer(
                 user_id=user_id,
                 caller_number=caller_id,
                 called_number=called_number,
-                sip_endpoint=sip_endpoint,
+                sip_endpoint=route.sip_endpoint,
                 status="asking",
                 transcript="",
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             )
             db.add(session)
         else:
-            session.sip_endpoint = sip_endpoint
+            session.sip_endpoint = route.sip_endpoint
             session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         await db.commit()
         xml_response = routing_service.generate_screening_prompt_xml(
             call_uuid, str(settings.public_base_url)
         )
-        decision = "screen_caller"
+    elif decision is InboundDecision.UNASSIGNED:
+        # Not one of our numbers. Nothing to say to the caller, and nothing to
+        # be billed for answering.
+        xml_response = routing_service.generate_reject_xml()
+    else:
+        xml_response = routing_service.generate_unavailable_xml(
+            settings.unavailable_message
+        )
+        decision = InboundDecision.UNAVAILABLE
 
     logger.info(
-        "inbound call uuid=%s to=%s from=%s decision=%s",
+        "inbound call uuid=%s to=%s from=%s decision=%s media_ready=%s",
         call_uuid,
         called_number,
         caller_id,
-        decision,
+        decision.value,
+        bool(route and route.media_ready),
     )
     return Response(content=xml_response, media_type="application/xml")
 
@@ -1177,7 +1257,43 @@ async def authorize_outbound(
         )
     except RouteGrantError as error:
         status = 503 if "not configured" in str(error) else 409
+        # Refusals are audited alongside grants. A phone that cannot dial says
+        # only "the call could not be authorized" on screen, so without this
+        # the reason — stale device, wrong destination, grant already spent —
+        # exists nowhere anyone can read it after the fact.
+        await AuditService(db).log(
+            user_id,
+            "outbound_route_refused",
+            {
+                "task_id": str(task_id),
+                "destination": payload.destination_number,
+                "reason": str(error),
+                "status": status,
+            },
+        )
+        logger.warning(
+            "outbound authorization refused task=%s status=%s reason=%s",
+            task_id,
+            status,
+            error,
+        )
         raise HTTPException(status_code=status, detail=str(error)) from error
+
+    await AuditService(db).log(
+        user_id,
+        "outbound_route_issued",
+        {
+            "task_id": str(grant.task_id),
+            "destination": grant.destination_number_for_audit,
+            "expires_at": grant.expires_at.isoformat(),
+            "ttl_seconds": route_service.ttl_seconds,
+        },
+    )
+    logger.info(
+        "outbound route issued task=%s expires_at=%s",
+        grant.task_id,
+        grant.expires_at.isoformat(),
+    )
 
     return OutboundRouteGrantResponse(
         task_id=grant.task_id,
