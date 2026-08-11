@@ -477,8 +477,12 @@ void on_registration_state(pjsua_acc_id account_id, pjsua_reg_info *info) {
   pjsua_acc_info account_info{};
   if (pjsua_acc_get_info(account_id, &account_info) == PJ_SUCCESS) {
     code = static_cast<uint16_t>(account_info.status);
-    engine->registered.store(account_info.status == PJSIP_SC_OK,
-                             std::memory_order_release);
+  engine->registered.store(account_info.status == PJSIP_SC_OK,
+                           std::memory_order_release);
+  if (account_info.status == PJSIP_SC_OK) {
+    pjsua_call_hangup_all();
+    engine->active_call_id.store(PJSUA_INVALID_ID, std::memory_order_release);
+  }
   }
   engine->registration_status.store(code, std::memory_order_release);
   engine->push_control_event(TRIPLEX_EVENT_REGISTRATION, code, PJSUA_INVALID_ID,
@@ -495,11 +499,6 @@ void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
   }
   // Drop any zombie INVITE that still occupies a call slot so a fresh
   // inbound (Plivo Dial / edge registrar) is not answered with 486 Busy.
-  pjsua_call_id existing =
-      engine->active_call_id.load(std::memory_order_acquire);
-  if (existing != PJSUA_INVALID_ID && existing != call_id) {
-    pjsua_call_hangup(existing, 487, nullptr, nullptr);
-  }
   pjsua_call_id others[PJSUA_MAX_CALLS]{};
   unsigned other_count = PJ_ARRAY_SIZE(others);
   if (pjsua_enum_calls(others, &other_count) == PJ_SUCCESS) {
@@ -512,6 +511,11 @@ void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
   engine->active_call_id.store(call_id, std::memory_order_release);
   engine->push_control_event(TRIPLEX_EVENT_INCOMING_CALL, 0, call_id,
                              PJ_SUCCESS, 0, 0);
+  // Edge UDP calls must not sit unanswered: PJSUA_MAX_CALLS may be 1 in older
+  // native stages, and a late Plivo Dial then gets 486 Busy Here.
+  if (engine->edge_udp_mode) {
+    (void)pjsua_call_answer(call_id, 200, nullptr, nullptr);
+  }
 }
 
 void disconnect_media(TriplexPjsipEngine *engine) {
@@ -1014,6 +1018,7 @@ extern "C" int triplex_pjsip_start(TriplexPjsipEngine *engine) {
     status = add_account(engine);
   }
   if (status == PJ_SUCCESS) {
+    pjsua_call_hangup_all();
     engine->start_capture_probe();
     engine->started.store(true, std::memory_order_release);
   }

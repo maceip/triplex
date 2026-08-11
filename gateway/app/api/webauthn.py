@@ -65,7 +65,9 @@ def _generate_challenge() -> str:
 
 
 def _get_rp_id() -> str:
-    return settings.webauthn_rp_id or settings.public_base_url.host
+    if settings.webauthn_rp_id:
+        return settings.webauthn_rp_id
+    return settings.public_base_url.host
 
 
 def _get_origin() -> str:
