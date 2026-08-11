@@ -1,98 +1,124 @@
 # Triplex
 
-Triplex is a voice agent that runs on an Android phone. You give it a job to
-do on the phone, like calling a restaurant, and it makes the call and talks
-for you. It can also answer calls to your number.
+Triplex is a voice agent that runs on an Android phone. You give it a job (for
+example, call a restaurant), and it places the call and talks for you. It can
+also answer calls that reach your Triplex number.
 
-The main idea: **do as much as possible on the phone itself.** The phone
-handles the microphone, listening, deciding what to say, and speaking. We only
-send work to a server when the phone genuinely cannot do it. This keeps the
-delay short, because the person on the other end of the call is waiting for an
-answer.
+Design rule: **do as much as possible on the phone.** Listening, deciding what
+to say, and speaking stay on-device when the hardware can support them. The
+gateway is control-plane only (accounts, routing XML, one-use outbound grants).
+It is not a media relay.
 
 ## Where things are
 
 | Folder | What it is | State |
 |---|---|---|
-| `apps/android/` | The Android app (dialer UI, SIP, SODA, Inflect/Qwen TTS, dialogue). | Builds, installs, and runs on real phones. |
-| `apps/android/dialogue/` | The conversation loop, with no Android in it. | Tested on a plain JVM: `cd apps/android && ./gradlew -p dialogue test`. |
+| `apps/android/` | Product app: dialer UI, SIP, SODA, reasoner, TTS, dialogue wiring. | Builds and runs on physical phones. |
+| `apps/android/dialogue/` | Pure-Kotlin conversation loop (no Android APIs). | JVM-tested: `./gradlew -p dialogue test`. |
 | `apps/android/telephony-plivo/` | Plivo Direct PJSIP adapter (UDP REGISTER + authorized outbound). | Proven on device against live Plivo PSTN. |
-| `gateway/` | Accounts, Plivo XML routing, one-use outbound route grants. | Running at `bridge.secure.build`. |
-| `services/` | Optional remote TTS / voice-clone helpers. | GPU-backed; used when on-device clone prep is not enough. |
-| `testlab/` | Measurement and validation scripts. | Never shipped to users. |
-| `docs/` | Plans, decisions, and the rules the code follows. | Current. |
-| `experiments/` | Retired code kept for reference. | Does not ship. |
-| `notes/` | Background reading. | — |
+| `apps/android/native-media/` | Rust real-time audio path (pools, epochs, mixer). | Covered by CI allocation / agent-core jobs. |
+| `apps/android/agent/` | Rust agent-core (VAD/turn/epoch helpers used via FFI). | Unit-tested in CI; not a second Python agent. |
+| `gateway/` | Accounts, Plivo `/answer` XML, outbound route grants. | Deployed at `https://bridge.secure.build`. |
+| `services/` | Optional GPU helpers (`voice-clone`, `voice_models`). | Used when on-device clone prep is not enough. |
+| `testlab/` | Measurement and validation scripts. | Not shipped to users. |
+| `docs/` | Plans, invariants, TTS decisions. | Mixed age — some still govern runtime; some describe retired Python/Chime paths. |
+| `experiments/` | Retired trees (e.g. Python agent). | Reference only; does not ship. |
+| `notes/` | Scratch / background reading. | Not product docs. |
+
+Details for the SIP adapter: `apps/android/telephony-plivo/README.md`.  
+Android module map: `apps/android/README.md`.
+
+## How a call actually works
+
+```
+Phone ──UDP SIP──► Plivo Direct (phone.plivo.com:5060)
+                      │
+Gateway ◄── HTTPS ──┤  /answer XML, route grants, device ready/media_ready
+                      │
+                   PSTN / DID
+```
+
+- **Outbound agent call.** App creates a task, fetches a one-use grant, dials
+  `sip:{digits}@phone.plivo.com;transport=udp` with `X-PH-TriplexGrant`. Plivo
+  hits gateway `/answer`, the grant is consumed, and Plivo places the PSTN leg
+  using the Triplex DID as caller ID.
+- **Inbound agent call.** Someone dials the Triplex Plivo DID. Gateway `/answer`
+  returns Dial-to-endpoint XML when the device is `ready` **and** `media_ready`,
+  so Plivo connects to the phone’s SIP Contact over Direct UDP. There is no
+  Kamailio / host SIP edge in this path.
+- **Default dialer ≠ agent media.** Holding Android’s dialer / call-screening
+  roles lets Triplex show UI for SIM ringing. It does **not** give the agent the
+  carrier PCM stream. Listen/speak still need the Plivo SIP leg (callers use the
+  Triplex DID, or the personal SIM is carrier-forwarded into that DID).
+- **On the phone after media is active.** SODA transcribes the SIP audio path;
+  Inflect (LiteRT) or Qwen3 speaks; Gemini Nano via AICore is the production
+  reasoner when the device has it. Dialogue starts from the SIP `MEDIA_STATE`
+  media-status code (not the SIP status field).
 
 ## What works today
 
-- **The app runs on a phone.** Installs, starts, and shows its screens. It can
-  hold the Android dialer + call-screening roles so SIM ringing uses Triplex UI.
-- **Outbound agent calls work on Plivo Direct.** The app asks the gateway for a
-  one-use grant, dials `sip:{digits}@phone.plivo.com;transport=udp` with the
-  `X-PH-TriplexGrant` header, Plivo hits `/answer`, consumes the grant, and
-  places the PSTN leg. Proven on a physical Xiaomi → live DID/PSTN path with
-  SIP `CONFIRMED` and billable Plivo Call API rows.
-- **Direct media is on the phone.** After media goes active, SODA starts on the
-  SIP audio path and the dialogue loop begins (opening speak via Inflect /
-  LiteRT). Barge-in is observed on live calls.
-- **Inbound routing to the device works when the phone is media-ready.** The
-  gateway returns Dial-to-endpoint XML so Plivo connects the caller to the
-  phone’s SIP Contact over Direct UDP — no Kamailio / host SIP edge.
-- **Talking and being interrupted works.** The app can speak and, when a
-  person starts talking over it, stop and keep only what the caller heard.
-- **The conversation loop is real.** Several turns, both directions, with a
-  local reasoner deciding what to say; truthful fallbacks when the reasoner
-  cannot answer. Exercised in JVM dialogue tests and on-device smoke.
-- **Voice enrollment works.** Read one consent sentence; the app can synthesize
-  new lines in that voice (placement still may be remote for clone prep).
-- **Built-in / on-device TTS paths exist.** Inflect (LiteRT) and Qwen3 streaming
-  with smaller emit strides and codec reuse for lower first-audio latency.
+- **App on device.** Installs and runs; can be set as default dialer and call
+  screening so SIM call *state* uses Triplex UI.
+- **Outbound Plivo Direct.** Grant → UDP INVITE → `/answer` → PSTN. Proven on a
+  physical phone with SIP `CONFIRMED` and billable Plivo Call API rows. Earlier
+  `sips:…:5061` + optional SRTP grants were rejected with **488** before
+  `/answer`; current grants use plain UDP + no SRTP + `ptime=20`.
+- **Direct media on the phone.** After media goes active, SODA and the dialogue
+  loop start on the SIP path. Opening speak via Inflect and barge-in have been
+  observed on live calls.
+- **Inbound Dial-to-endpoint XML.** Implemented in the gateway for registered,
+  `media_ready` devices. Requires the device to advertise readiness correctly.
+- **Conversation loop contract.** Multi-turn listen/speak with interruption and
+  fail-closed reasoner handling is real in `dialogue/` (JVM tests) and wired on
+  device. Live reasoned turns still depend on an available on-device reasoner.
+- **Voice enrollment UI + on-device TTS paths.** Consent capture and Inflect /
+  Qwen3 LiteRT synthesis exist; clone *preparation* may still hit a GPU helper.
+- **CI.** GitHub Actions on `main` / `develop`: RT allocation guard, agent-core,
+  transport validation, gateway tests, dialogue tests, Android JVM/unit build,
+  evidence gate. See `.github/workflows/README.md`.
 
 ## What does not work yet / known gaps
 
-- **Gemini Nano via AICore is not available on every device.** Xiaomi smoke
-  saw `FEATURE_NOT_FOUND` for Nano Full; dialogue then stops with
-  `REASONER_UNAVAILABLE`. Prefer LiteRT-LM (or another on-device reasoner) on
-  those phones — do not assume llama.cpp is in this stack.
-- **SIM-leg audio is not agent media.** A third-party default dialer gets call
-  *state* through `InCallService`, not the PCM stream. Agent listen/speak still
-  requires the Plivo SIP leg (give out the Triplex DID, or carrier-forward the
-  personal SIM into that DID so Plivo `/answer` can Dial the phone’s SIP
-  endpoint when `media_ready`).
-- **Carrier call forwarding is not set up yet.** Pixel → Xiaomi SIM
-  (`+16023868889`) rings Triplex as dialer, but without CF into
-  `+13183332050` there is no SIP media path and the agent cannot control the
-  call. Next: enable CF (and `bridgeCallsToPhone` / `media_ready`) then retest.
-- **Callee reachability can still fool smoke tests.** PSTN can answer at
-  voicemail or another multi-device endpoint while the handset never shows
-  `SET_RINGING`. Dialer role is necessary but not sufficient.
-- **Published live-call reasoner latency.** The code logs Nano/reasoner turn
-  timing; we have not yet published a p95 from a clean answered conversation.
-- **Fully on-device voice cloning.** Clone preparation may still need a GPU
-  server; the app is honest about placement on screen.
+- **Gemini Nano is not on every phone.** Devices without AICore Nano Full report
+  `FEATURE_NOT_FOUND`; dialogue then exits with `REASONER_UNAVAILABLE` after the
+  scripted opening. LiteRT-LM (or another on-device reasoner) is the intended
+  path there — this stack does **not** ship llama.cpp for calls.
+- **Personal SIM → agent media needs carrier CF.** Ringing Triplex as dialer on
+  a SIM call is not enough. Forward the SIM into the Triplex Plivo DID (and keep
+  `media_ready` / bridge-to-phone enabled) before the agent can own audio.
+- **Smoke-test traps.** PSTN can answer voicemail or another endpoint while the
+  handset never shows ringing. Dialer role is necessary but not sufficient.
+- **Published live reasoner latency.** Turn timings are logged; no clean answered
+  multi-turn p95 is published yet.
+- **Fully on-device voice cloning.** Prep may still need `services/`; the UI is
+  meant to stay honest about placement.
+- **Stale docs under `docs/`.** Prefer `RUNTIME_INVARIANTS.md` and the TTS
+  decision docs for product rules. `QUICKSTART.md` and parts of the unification
+  series still describe retired Python / Chime worker paths — do not follow those
+  to run today’s app.
 
 ## Telephony notes (Plivo Direct)
 
 - Register: UDP to `sip:phone.plivo.com:5060` with Contact rewrite + keepalives.
-- Outbound grants: `sip:…;transport=udp` (not `sips:5061`). TLS + optional SRTP
-  in the INVITE was rejected with **488** before `/answer`.
-- SDP: PCMU/PCMA + `telephone-event`, `ptime=20`, SRTP **disabled** on Direct.
+- Outbound grants: `sip:…;transport=udp` (not `sips:5061`).
+- SDP: PCMU/PCMA + `telephone-event`, `ptime=20`, SRTP **disabled**.
 - Account transport is unpinned so URI/`transport=` selects UDP vs TLS.
-- Inbound agent path: Plivo DID `+13183332050` → gateway `/answer` → Dial SIP
-  Contact when the device is `ready` + `media_ready`. Personal SIM numbers need
-  carrier CF into that DID for the agent to own audio.
-- Debug smoke (debug builds):  
-  `adb shell am broadcast -a dev.triplex.debug.OUTBOUND_SMOKE --es destination '+1…' -n dev.triplex/.debug.DevelopmentControlReceiver`
+- Debug smoke (debug APK):
 
-Details: `apps/android/telephony-plivo/README.md`.
+```bash
+adb shell am broadcast \
+  -a dev.triplex.debug.OUTBOUND_SMOKE \
+  --es destination '+1XXXXXXXXXX' \
+  -n dev.triplex/.debug.DevelopmentControlReceiver
+```
 
 ## How to build and run
 
 ```bash
-# Android app. First create apps/android/local.properties with:
+# apps/android/local.properties — required:
 #   sdk.dir=/path/to/android/sdk
 #   gateway.url=https://bridge.secure.build
+
 cd apps/android && ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
@@ -103,35 +129,28 @@ apps/android/scripts/prepare-native.sh arm64-v8a
 # Dialogue loop (JDK only)
 cd apps/android && ./gradlew -p dialogue test
 
-# Gateway
+# Gateway locally
 cd gateway && docker compose up -d
 
-# Gateway tests (uses a real Postgres; point at a disposable DB)
+# Gateway tests (disposable Postgres)
 cd gateway
 docker compose up -d postgres
 TEST_DATABASE_URL=postgresql+asyncpg://triplex:triplex@localhost:5432/triplex \
   pytest tests/
 ```
 
-## Reading order
+## Reading order (for the shipping stack)
 
-Start with `docs/FINAL_UNIFICATION.md`. Then:
-
-- `docs/UNIFICATION_PLAN.md` — goals and rules we agreed not to break.
-- `docs/RUNTIME_INVARIANTS.md` — phone runtime rules (interruption, epochs).
-- `docs/DISPOSITION_LEDGER.md` — keep / change / retire. Read before new code.
-- `docs/MODEL_REVIEW_TTS.md` / `docs/DECISION_TTS_PLACEMENT.md` — TTS choices.
-
-## CI
-
-GitHub Actions runs Triplex CI on every push and pull request to `main`
-(workflow: `.github/workflows/ci.yml`). Independent jobs cover the RT
-allocation guard, agent-core, transport validation, gateway tests, the
-conversation loop, and Android JVM unit tests; an evidence gate aggregates
-the artifacts. Details live in `.github/workflows/README.md`.
+1. This file and `apps/android/telephony-plivo/README.md`
+2. `docs/RUNTIME_INVARIANTS.md` — interruption / epoch rules
+3. `docs/DECISION_TTS_PLACEMENT.md` / `docs/MODEL_REVIEW_TTS.md` — TTS placement
+4. `docs/DISPOSITION_LEDGER.md` — keep / change / retire (verify against code;
+   some rows lag the Direct UDP reality)
+5. Unification docs (`FINAL_UNIFICATION.md`, `UNIFICATION_PLAN.md`) — historical
+   north star; not a runbook for the current dialer
 
 ## A rule worth knowing
 
-We do not claim something works until we have seen it work for real: on a
-phone, on a real phone call, with the timings written down. If a thing is
-half-done, the code and these documents say so.
+We do not claim something works until we have seen it work for real: on a phone,
+on a real phone call, with timings written down. If a thing is half-done, the
+code and these documents say so.

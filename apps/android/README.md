@@ -1,131 +1,118 @@
-# Triplex Android App
+# Triplex Android
 
-Phone-first agent runtime implementing local inference, VAD, ASR, turn detection, reasoning, task state, TTS, and interruption.
+Phone-first voice agent: Jetpack Compose dialer UI, Plivo Direct SIP, on-device
+listen/speak, and a pure-Kotlin dialogue loop.
 
-## Architecture
+This module is the product. Python under `experiments/` does not ship here.
 
-Per `UNIFICATION_PLAN.md`, the Android app runs as much of the agent as possible:
+## Gradle modules
 
-- **Local Agent Management** (agent/): VAD, ASR, reasoning, TTS modules
-- **Telephony** (telephony/): SIP/WebRTC stack, provider adapters
-- **Control** (control/): Device readiness, task state machine
-- **Native Media** (native-media/): Frame processing, JNI audio injection
+| Module | Role |
+|---|---|
+| `:app` | UI, Hilt wiring, SODA, AICore reasoner, Inflect/Qwen TTS, telephony controller, enrollment. |
+| `:telephony-plivo` | PJSIP Plivo Direct adapter (JNI + C++). See `telephony-plivo/README.md`. |
+| `:dialogue` (included build) | Conversation loop + spoken-reply sanitizer; JVM unit tests, no Android SDK. |
+| `native-media/` | Rust RT audio (built via `scripts/prepare-native.sh`, linked from the app). |
+| `agent/` | Rust agent-core (FFI used by native-media / app bridge). |
+| `:telemetry-client` | Telemetry helpers. |
 
-## Project Structure
+## App package map (`app/src/main/java/dev/triplex/`)
 
 ```
-app/src/main/java/dev/triplex/
-├── agent/              # Local agent runtime
-│   ├── audio/          # Audio capture and playout
-│   ├── asr/            # Streaming ASR
-│   ├── reasoning/      # Local inference
-│   ├── tts/            # Cloned voice synthesis
-│   └── task/           # Task execution engine
-├── control/            # Device state management
-├── data/               # Repository pattern
-│   ├── local/          # Encrypted storage
-│   ├── remote/         # Gateway API client
-│   └── repository/     # Data abstraction
-├── domain/             # Business logic
-│   ├── model/          # Domain entities
-│   └── usecase/        # Business rules
-├── telephony/          # Provider integration
-│   ├── sip/            # PJSIP/Linphone adapter
-│   └── media/          # Direct media handling
-├── ui/                 # Jetpack Compose UI
-│   ├── screens/        # Screen composables
-│   ├── components/     # Reusable components
-│   ├── theme/          # Material theme
-│   └── navigation/     # Navigation graph
-└── di/                 # Dependency injection
+data/          # local prefs, gateway HTTP, repositories, telecom helpers
+dialer/        # default-dialer / InCallService integration
+domain/        # call models and shared domain types
+nativebridge/  # JNI / Rust bridge surfaces
+speech/        # SODA, AiCore reasoner, Inflect + Qwen3 TTS
+telephony/sip/ # TelephonyController — SIP events → dialogue
+tts/           # additional TTS helpers
+ui/
+  agent/       # agent home, run list/detail, voice clone
+  call/        # in-call + incoming surfaces
+  enrollment/  # account / device enrollment
+  keypad/      # dialer keypad
+  shell/       # app chrome
+  theme/       # Liquid Glass / layout tokens
+  components/  # shared composables
+voice/         # voice profile state
+di/            # Hilt modules
 ```
 
-## Build Requirements
+There is no separate `agent/audio|asr|reasoning` Kotlin tree and no Linphone
+module in this app. Live call audio is Plivo Direct + SODA + LiteRT TTS.
 
-- Android SDK 35
-- Kotlin 2.0.21
-- Gradle 8.10.2
-- Spike build floor: API 29 (Android 10); the product minimum remains an open decision
-- Target SDK 35
+## Build requirements
 
-## Quick Start
+- Android SDK / compileSdk **35**, targetSdk **35**, minSdk **33**
+- JDK suitable for the Android Gradle Plugin in this tree
+- NDK for native stage (`ANDROID_NDK_HOME`)
+- `local.properties` in `apps/android/`:
 
-### 1. Set Gateway URL
-
-Create `local.properties`:
 ```properties
-gateway.url=http://10.0.2.2:8000
+sdk.dir=/path/to/android/sdk
+gateway.url=https://bridge.secure.build
 ```
 
-For physical devices, use your machine's IP:
-```properties
-gateway.url=http://192.168.1.100:8000
-```
+Emulator-only gateway URLs (`http://10.0.2.2:8000`) are fine for local gateway
+dev; production phones should use the deployed gateway.
 
-### 2. Build and Install
+## Build and install
 
 ```bash
-./gradlew assembleDebug
-./gradlew installDebug
+# From apps/android/
+export ANDROID_NDK_HOME=/absolute/path/to/android-ndk
+scripts/prepare-native.sh arm64-v8a
+
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# Dialogue only (no device)
+./gradlew -p dialogue test
+
+# Transport validation (PJSIP module)
+./gradlew :telephony-plivo:transportValidation
 ```
 
-Or use Android Studio: Run > Run 'app'
+## Call path (short)
 
-## Dependencies
+1. Device registers SIP **UDP** to `phone.plivo.com`.
+2. Outbound: task → one-use grant → `sip:…;transport=udp` INVITE with grant header.
+3. Media active → SODA + dialogue; speak via Inflect/Qwen into the SIP port.
+4. SIM dialer role alone does **not** feed agent PCM — need the Plivo SIP leg
+   (DID or carrier CF into the DID) plus `media_ready` for inbound Dial XML.
 
-| Library | Purpose |
-|---------|---------|
-| Jetpack Compose | Declarative UI |
-| Hilt | Dependency injection |
-| Ktor | HTTP client |
-| DataStore | Preference storage |
-| Security-Crypto | Encrypted preferences |
-| Kotlinx Serialization | JSON parsing |
+Debug outbound (debug builds):
 
-## Screens
+```bash
+adb shell am broadcast \
+  -a dev.triplex.debug.OUTBOUND_SMOKE \
+  --es destination '+1XXXXXXXXXX' \
+  -n dev.triplex/.debug.DevelopmentControlReceiver
+```
 
-### Enrollment
-- Register user account
-- Generate and store device token
-- Set device ready status
+## Screens (what exists)
 
-### Dashboard
-- View agent status
-- Active task card with Stop button
-- Task history list
-- Create new task FAB
+- **Shell + keypad** — dialer chrome and number entry
+- **Agent home / runs** — tasks and run history
+- **Enrollment** — account / device registration toward the gateway
+- **Voice setup** — consent capture and clone/profile flow
+- **Incoming / in-call** — Triplex surfaces for SIP and dialer call state
 
-### Create Task
-- Select task type (appointment modification, reservation update)
-- Enter task parameters
-- Specify destination number
+## Dependencies (high level)
 
-## Placement Tracking
+Jetpack Compose, Hilt, Ktor (gateway client), DataStore / encrypted prefs,
+Kotlin serialization, PJSIP (via `:telephony-plivo`), LiteRT TTS models,
+ML Kit / AICore for Gemini Nano when present.
 
-All operations log placement (`LOCAL`, `REMOTE_*`) with latency. Check `LatencyTracker` for p50/p95 metrics.
+## Performance targets
 
-The first direct Plivo/PJSIP and native-media spike lives in
-`telephony-plivo/` and `native-media/`. It remains evidence-gated pending real
-PSTN calls on physical Android devices; local agent modules are not yet wired.
+Product latency bars live in `docs/UNIFICATION_PLAN.md` /
+`docs/RUNTIME_INVARIANTS.md`. Treat published p95 from **live answered SIP
+calls** as the only claim that something meets those bars; CI proves allocation
+and unit contracts, not end-to-end caller delay.
 
-## Performance Targets
+## Related docs
 
-Per `UNIFICATION_PLAN.md`, target p95 latencies:
-
-| Measure | Target |
-|---------|--------|
-| Media callback to VAD/ASR enqueue | 5 ms |
-| Speech onset to interruption decision | 40 ms |
-| Speech onset to caller stop | 150 ms |
-| Stable ASR partial | 120 ms |
-| Reflex trigger to first audio | 200 ms |
-| General turn to first audio | 500 ms |
-| Local TTS first PCM | 100 ms |
-| Queued audio | ≤ 60 ms |
-
-## Security
-
-- Device tokens stored in encrypted preferences
-- Voice profiles encrypted with hardware-backed keys
-- Clear-text traffic only for local development
-- ProGuard enabled for release builds
+- Repo root `README.md` — what is proven vs gaps
+- `telephony-plivo/README.md` — Direct UDP / SDP / security defaults
+- `docs/RUNTIME_INVARIANTS.md` — interruption and epoch rules
