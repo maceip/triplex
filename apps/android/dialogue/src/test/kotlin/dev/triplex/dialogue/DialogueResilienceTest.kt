@@ -334,6 +334,33 @@ class DialogueResilienceTest {
         )
     }
 
+    /**
+     * The opening goes out before the availability probe so the caller hears a
+     * greeting instead of silence — but that means a DOWNLOADABLE Nano that
+     * starts a long download inside `available()` can still leave them waiting
+     * after they have already been spoken to. The probe shares the same
+     * remaining-budget cap as listen/reply.
+     */
+    @Test
+    fun an_availability_probe_that_stalls_past_the_budget_closes_the_call() = runTest {
+        val clock = TestClock()
+        val transport = ScriptedCaller(caller)
+        val reasoner = ReplayReasoner(nano, availabilityLatencyMs = 120_000L)
+
+        val outcome = CallDialogue(reasoner, transport, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(1, reasoner.availabilityChecks)
+        assertEquals(0, outcome.reasonedTurns, "no turn starts if availability never returns")
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+        // Opening was delivered before the probe; only then did the budget bind.
+        assertEquals("Hi, Triplex screening assistant.", transport.spoken.first())
+    }
+
     /** One instance serves consecutive calls; state must not leak between them. */
     @Test
     fun a_reused_dialogue_starts_the_next_call_from_zero() = runTest {
