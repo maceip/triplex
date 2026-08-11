@@ -72,7 +72,13 @@ class CallDialogue(
             )
         }
 
-        if (!session.reasonerIsAvailable()) {
+        // Availability can block: the production reasoner starts a Nano
+        // download when the feature is only DOWNLOADABLE. That must not leave
+        // the caller in silence past the call's wall-clock budget after the
+        // opening has already gone out — same bound as listen/reply.
+        val availability = session.withinBudget { Box(session.reasonerIsAvailable()) }
+            ?: return session.outOfTime()
+        if (!availability.value) {
             session.speakClosing(plan.closings.onReasonerLost)
             return session.finish(StopReason.REASONER_UNAVAILABLE)
         }
