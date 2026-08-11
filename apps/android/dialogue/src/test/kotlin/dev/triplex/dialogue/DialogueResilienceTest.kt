@@ -1,5 +1,6 @@
 package dev.triplex.dialogue
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -261,6 +262,68 @@ class DialogueResilienceTest {
 
         assertEquals(StopReason.TIME_BUDGET, outcome.stop)
         assertTrue(outcome.durationMs >= 120_000L)
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+    }
+
+    /**
+     * The budget has to bound the *blocking* steps, not just be sampled
+     * between them. A transport whose silence timeout is longer than the time
+     * left in the call would otherwise spend all of it waiting, and the
+     * ceiling would be advisory.
+     */
+    @Test
+    fun a_caller_who_goes_quiet_cannot_outlast_the_remaining_budget() = runTest {
+        val clock = TestClock()
+        val transport = object : DialogueTransport {
+            val spoken = mutableListOf<String>()
+            var listenCalls = 0
+            override fun isActive(): Boolean = true
+            override suspend fun speak(text: String): SpeechResult {
+                spoken += text
+                return SpeechResult.DELIVERED
+            }
+            override suspend fun awaitCallerReply(): String? {
+                listenCalls += 1
+                // The transport's own timeout: far longer than the call has left.
+                delay(45_000)
+                return null
+            }
+        }
+
+        val outcome = CallDialogue(ReplayReasoner(nano), transport, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(1, transport.listenCalls)
+        // It still said something before hanging up.
+        assertEquals(
+            "Thank you. I have the details and I will pass them along. Goodbye.",
+            transport.spoken.last(),
+        )
+    }
+
+    /** A model that stalls is dead air, and dead air is what the budget is for. */
+    @Test
+    fun a_reasoner_that_stalls_past_the_budget_closes_the_call() = runTest {
+        val clock = TestClock()
+        val transport = ScriptedCaller(caller)
+        // First reply takes two minutes; the call is allowed five seconds.
+        val reasoner = ReplayReasoner(nano, latencyMs = 120_000L)
+        val observer = RecordingObserver()
+
+        val outcome = CallDialogue(reasoner, transport, observer, clock = clock)
+            .run(screening(DialogueBudget(maxTurns = 6, maxDurationMs = 5_000L)))
+
+        assertEquals(StopReason.TIME_BUDGET, outcome.stop)
+        assertEquals(0, outcome.reasonedTurns, "the stalled turn never landed")
+        // The overrun is recorded as what it was, not as a silent stop.
+        assertContains(
+            observer.ofType<DialogueEvent.ReasonerFailed>().single().reason,
+            "remaining time budget",
+        )
         assertEquals(
             "Thank you. I have the details and I will pass them along. Goodbye.",
             transport.spoken.last(),

@@ -320,10 +320,13 @@ jobs:
       # agent most worth testing, and this way it is tested without the Android
       # SDK, an emulator, or the sibling checkouts :app needs — so it runs on
       # every pull request instead of only where a full Android toolchain does.
+      # Through the checked-in wrapper rather than whatever `gradle` the runner
+      # happens to ship, so CI and a laptop build with the same Gradle. `-p`
+      # because the dialogue build is standalone and has no wrapper of its own.
       - name: Run conversation tests
         run: |
-          cd apps/android/dialogue
-          gradle test --no-daemon
+          cd apps/android
+          ./gradlew -p dialogue test --no-daemon
 
       - name: Archive test results
         uses: actions/upload-artifact@v4

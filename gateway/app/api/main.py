@@ -36,6 +36,7 @@ from tenacity import (
 
 from ..config import settings
 from ..db.models import Base, ScreeningSessionDB, SipCredentialDB, VoiceProfileDB
+from ..db.schema_sync import sync_additive_columns
 from ..models.schemas import (
     DeviceRegistration,
     TaskDefinition,
@@ -95,8 +96,27 @@ async def get_current_user_id(
     reraise=True,
 )
 async def _initialize_database() -> None:
+    """Create missing tables, then add missing columns to the ones that exist.
+
+    The second half matters as much as the first. `create_all` skips a table it
+    finds, so a column added to a model never reaches a database that already
+    has that table — and every ORM query then names a column the database does
+    not have. See `app.db.schema_sync` for why this is narrow and what should
+    replace it.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        result = await conn.run_sync(
+            lambda sync_conn: sync_additive_columns(sync_conn, Base.metadata)
+        )
+    for change in result.applied:
+        logger.warning("schema updated: added %s.%s", change.table, change.column)
+    for change in result.unsafe:
+        logger.error(
+            "schema is behind the models: %s.%s must be added by hand",
+            change.table,
+            change.column,
+        )
 
 
 @asynccontextmanager

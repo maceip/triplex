@@ -15,7 +15,7 @@ answer.
 | Folder | What it is | State |
 |---|---|---|
 | `apps/android/` | The Android app. This is the only thing users see. | Builds, installs, and runs on a real phone. |
-| `apps/android/dialogue/` | The conversation loop, with no Android in it. | Tested on a plain JVM: `cd apps/android/dialogue && ./gradlew test`. |
+| `apps/android/dialogue/` | The conversation loop, with no Android in it. | Tested on a plain JVM: `cd apps/android && ./gradlew -p dialogue test`. |
 | `gateway/` | The server that handles accounts, phone numbers, and call routing. | Running at `bridge.secure.build`. Answers real calls. |
 | `services/` | Servers that run the text-to-speech models. | Works, but needs a computer with a good GPU. |
 | `testlab/` | Scripts we use to measure things and check our work. | Never shipped to users. |
@@ -100,8 +100,9 @@ cd apps/android/native-media && cargo test
 cd apps/android/agent && cargo test
 
 # The conversation loop. Needs a JDK and nothing else — no Android SDK,
-# no phone, no emulator.
-cd apps/android/dialogue && ./gradlew test
+# no phone, no emulator. It is its own Gradle build, so it is run with
+# `-p` through the wrapper that lives one directory up.
+cd apps/android && ./gradlew -p dialogue test
 
 # The server
 cd gateway && docker compose up -d

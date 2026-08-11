@@ -1,6 +1,7 @@
 package dev.triplex.dialogue
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The multi-turn conversation loop, for inbound screening and outbound tasks
@@ -30,8 +31,11 @@ import kotlinx.coroutines.CancellationException
  *    interrupted turn is recorded as interrupted and the loop listens next,
  *    rather than re-speaking the tail the caller cut off.
  * 4. **The call is bounded.** Turns, wall-clock time, and consecutive reasoner
- *    failures all have ceilings, checked before a turn starts rather than
- *    after, so the agent never begins something it cannot finish.
+ *    failures all have ceilings. The wall clock is a real bound and not just a
+ *    sample taken between turns: waiting for the caller and waiting for the
+ *    model are both capped at whatever is left of the budget, because those
+ *    are the two steps that can block for a long time and a check that only
+ *    runs between them would let a single slow turn overrun by minutes.
  *
  * The loop owns *when* things are said. [DialogueTransport] owns how audio gets
  * to the wire and [CallReasoner] owns what a reply says — this class holds
@@ -82,7 +86,12 @@ class CallDialogue(
                 Gate.Continue -> Unit
             }
 
-            val callerText = session.listen()
+            // Waiting for the caller is capped at what is left of the call's
+            // budget. A transport whose own silence timeout is longer than the
+            // remaining time would otherwise spend it all here.
+            val listened = session.withinBudget { Box(session.listen()) }
+                ?: return session.outOfTime()
+            val callerText = listened.value
             if (callerText == null) {
                 val reason =
                     if (!transport.isActive()) StopReason.CALL_ENDED else StopReason.CALLER_SILENT
@@ -92,8 +101,19 @@ class CallDialogue(
                 return session.finish(reason)
             }
 
-            when (val reply = session.reason(callerText)) {
+            // So is waiting for the model. An on-device model under memory
+            // pressure can take many seconds, and every one of them is dead
+            // air; past the budget the call closes instead of accruing more.
+            val reasoned = session.withinBudget { Box(session.reason(callerText)) }
+                ?: return session.outOfTime(reasonerOverran = true)
+
+            when (val reply = reasoned.value) {
                 is Reply.Spoken -> {
+                    // Speaking is deliberately *not* cut off at the deadline.
+                    // It is already bounded — `SpokenReply` caps an utterance
+                    // at about fifteen seconds — and stopping mid-word to save
+                    // a few of them is worse for the person listening than a
+                    // slightly long call. The next budget check ends it.
                     val result = session.speak(reply.text, session.turnNumber)
                     if (!result.reachedCaller) {
                         return session.finish(
@@ -109,6 +129,12 @@ class CallDialogue(
             }
         }
     }
+
+    /**
+     * Distinguishes "the operation returned null" from "the operation ran out
+     * of time", which `withTimeoutOrNull` alone cannot: both come back as null.
+     */
+    private class Box<T>(val value: T)
 
     private sealed interface Gate {
         data object Continue : Gate
@@ -139,7 +165,8 @@ class CallDialogue(
 
         private var reasonedTurns = 0
         private var reasonerFailures = 0
-        private var consecutiveFailures = 0
+        var consecutiveFailures = 0
+            private set
         private var fallbacksSpoken = 0
         private var fallbackLineIndex = 0
         private var bargeIns = 0
@@ -161,6 +188,36 @@ class CallDialogue(
             }
             observer.onEvent(DialogueEvent.ReasonerChecked(available, clock() - began))
             return available
+        }
+
+        /** Milliseconds left before the wall-clock budget is spent. */
+        fun remainingMs(): Long = plan.budget.maxDurationMs - (clock() - startedAt)
+
+        /**
+         * Runs [block] with whatever is left of the call's budget, or returns
+         * null if it overran. Cancellation propagates into the block, so a
+         * model call still in flight is abandoned rather than left running
+         * against a call that has already ended.
+         */
+        suspend fun <T> withinBudget(block: suspend () -> T): T? {
+            val remaining = remainingMs()
+            if (remaining <= 0) return null
+            return withTimeoutOrNull(remaining) { block() }
+        }
+
+        /** Closes the call because the wall-clock budget is spent. */
+        suspend fun outOfTime(reasonerOverran: Boolean = false): DialogueOutcome {
+            if (reasonerOverran) {
+                observer.onEvent(
+                    DialogueEvent.ReasonerFailed(
+                        turnNumber,
+                        consecutiveFailures + 1,
+                        "exceeded the call's remaining time budget",
+                    )
+                )
+            }
+            speakClosing(plan.closings.onBudgetReached)
+            return finish(StopReason.TIME_BUDGET)
         }
 
         fun budgetCheck(): Gate = when {

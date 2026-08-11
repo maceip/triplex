@@ -7,6 +7,7 @@ import dev.triplex.data.local.AgentConfigRepository
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.remote.GatewayApi
 import dev.triplex.data.remote.ScreeningSession
+import dev.triplex.data.repository.Result
 import dev.triplex.data.repository.UserRepository
 import dev.triplex.telephony.sip.CallStateInfo
 import dev.triplex.telephony.sip.TelephonyController
@@ -15,12 +16,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.time.Instant
@@ -151,19 +155,74 @@ class ScreeningCoordinator @Inject constructor(
      * is only made when the user has turned the handoff on
      * ([dev.triplex.data.local.AgentInboundConfig.bridgeCallsToPhone]).
      */
-    private suspend fun publishReadiness() {
-        var lastRegistered: Boolean? = null
-        while (true) {
-            val registered = telephonyController.sipState.value in READY_SIP_STATES
-            val bridge = registered && agentConfig.inboundConfig().bridgeCallsToPhone
-            if (registered != lastRegistered) {
-                Timber.i("Publishing readiness: registered=%s bridge=%s", registered, bridge)
+    private suspend fun publishReadiness() = coroutineScope {
+        // Two reasons to publish, and they need different triggers.
+        //
+        // A *change* has to go out at once. Registration completing a second
+        // after a heartbeat would otherwise leave the gateway believing this
+        // phone is unreachable for a minute and a half — long enough for the
+        // first outbound call after launch to be refused, and long enough for
+        // an inbound caller to be routed to an endpoint that has just dropped.
+        // Sampling on a timer cannot do that, however short the timer.
+        //
+        // The *heartbeat* has to keep going even when nothing changes, because
+        // the gateway expires a readiness claim that stops being restated.
+        //
+        // So: one flow of the actual state, and a ticker merged into it.
+        val state = combine(
+            telephonyController.sipState,
+            agentConfig.inbound,
+        ) { sipState, inbound ->
+            val registered = sipState in READY_SIP_STATES
+            Readiness(
+                ready = registered,
+                mediaReady = registered && inbound.bridgeCallsToPhone,
+            )
+        }.distinctUntilChanged()
+
+        val heartbeat = flow {
+            while (true) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                emit(Unit)
             }
-            lastRegistered = registered
-            userRepository.setDeviceReady(ready = registered, mediaReady = bridge)
-            delay(HEARTBEAT_INTERVAL_MS)
+        }
+
+        var latest: Readiness? = null
+        launch {
+            state.collect { readiness ->
+                latest = readiness
+                Timber.i(
+                    "Publishing readiness: ready=%s mediaReady=%s",
+                    readiness.ready,
+                    readiness.mediaReady,
+                )
+                publish(readiness)
+            }
+        }
+        launch {
+            heartbeat.collect {
+                // Restates whatever the current claim is. No log: a heartbeat
+                // that says the same thing every ninety seconds is noise.
+                latest?.let { publish(it) }
+            }
         }
     }
+
+    private suspend fun publish(readiness: Readiness) {
+        val result = userRepository.setDeviceReady(
+            ready = readiness.ready,
+            mediaReady = readiness.mediaReady,
+        )
+        if (result is Result.Error) {
+            // Not fatal: the next heartbeat restates it. Worth saying once,
+            // because a phone that cannot reach the gateway will stop being
+            // routed to when its claim expires.
+            Timber.w("Could not publish readiness: %s", result.message)
+        }
+    }
+
+    /** What this phone currently claims it can do. */
+    private data class Readiness(val ready: Boolean, val mediaReady: Boolean)
 
     private suspend fun pollGatewayScreening() {
         while (true) {
@@ -326,6 +385,8 @@ class ScreeningCoordinator @Inject constructor(
          * Comfortably inside the gateway's `DEVICE_HEARTBEAT_TTL_SECONDS`
          * (300 s by default), so a single missed check-in — a tunnel, a
          * backgrounded app — does not make the phone unreachable.
+         *
+         * This paces the *keep-alive* only. Changes do not wait for it.
          */
         const val HEARTBEAT_INTERVAL_MS = 90_000L
 
