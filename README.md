@@ -57,10 +57,16 @@ answer.
   those phones — do not assume llama.cpp is in this stack.
 - **SIM-leg audio is not agent media.** A third-party default dialer gets call
   *state* through `InCallService`, not the PCM stream. Agent listen/speak still
-  requires the Plivo SIP leg (Triplex number or carrier forward into SIP).
+  requires the Plivo SIP leg (give out the Triplex DID, or carrier-forward the
+  personal SIM into that DID so Plivo `/answer` can Dial the phone’s SIP
+  endpoint when `media_ready`).
+- **Carrier call forwarding is not set up yet.** Pixel → Xiaomi SIM
+  (`+16023868889`) rings Triplex as dialer, but without CF into
+  `+13183332050` there is no SIP media path and the agent cannot control the
+  call. Next: enable CF (and `bridgeCallsToPhone` / `media_ready`) then retest.
 - **Callee reachability can still fool smoke tests.** PSTN can answer at
-  voicemail or another multi-device endpoint while the target Pixel never shows
-  `SET_RINGING`. Dialer role on the Pixel is necessary but not sufficient.
+  voicemail or another multi-device endpoint while the handset never shows
+  `SET_RINGING`. Dialer role is necessary but not sufficient.
 - **Published live-call reasoner latency.** The code logs Nano/reasoner turn
   timing; we have not yet published a p95 from a clean answered conversation.
 - **Fully on-device voice cloning.** Clone preparation may still need a GPU
@@ -73,6 +79,9 @@ answer.
   in the INVITE was rejected with **488** before `/answer`.
 - SDP: PCMU/PCMA + `telephone-event`, `ptime=20`, SRTP **disabled** on Direct.
 - Account transport is unpinned so URI/`transport=` selects UDP vs TLS.
+- Inbound agent path: Plivo DID `+13183332050` → gateway `/answer` → Dial SIP
+  Contact when the device is `ready` + `media_ready`. Personal SIM numbers need
+  carrier CF into that DID for the agent to own audio.
 - Debug smoke (debug builds):  
   `adb shell am broadcast -a dev.triplex.debug.OUTBOUND_SMOKE --es destination '+1…' -n dev.triplex/.debug.DevelopmentControlReceiver`
 
