@@ -15,11 +15,22 @@ button:disabled { background: #555; cursor: not-allowed; }
 .status { padding: 16px; background: #1a1a1a; border-radius: 8px; margin-top: 20px; display: none; }
 .status.success { border-left: 4px solid #34C759; }
 .status.error { border-left: 4px solid #FF3B30; }
+.status.info { border-left: 4px solid #007AFF; }
 .info { font-size: 14px; color: #888; margin-top: 24px; }
 #login-section { display: none; }
+.check { padding: 12px; margin: 10px 0; border-radius: 8px; }
+.check.ok { background: #1a4d1a; }
+.check.fail { background: #4d1a1a; }
 </style>
 </head>
 <body>
+<div id="checks" style="margin-bottom: 30px;">
+<h3>WebAuthn Compatibility Check</h3>
+<div id="check-https" class="check"></div>
+<div id="check-webauthn" class="check"></div>
+<div id="check-platform" class="check"></div>
+</div>
+
 <div id="register-section">
 <h1>Create Account</h1>
 <p class="subtitle">Register with passkey (Face ID, Touch ID, or security key)</p>
@@ -38,9 +49,38 @@ button:disabled { background: #555; cursor: not-allowed; }
 <button onclick="showRegister()" style="background: transparent; color: #007AFF; margin-top: 12px;">Need an account? Register</button>
 </div>
 
-<p class="info">Passkeys are stored securely on your device.<br>Supported: Face ID, Touch ID, Windows Hello, Android Biometrics</p>
+<p class="info">Passkeys work with Face ID, Touch ID, Windows Hello, or security keys.</p>
 
 <script>
+// Check WebAuthn compatibility
+const isHTTPS = window.location.protocol === 'https:';
+const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const hasWebAuthn = window.PublicKeyCredential !== undefined;
+let hasPlatformAuth = false;
+
+document.getElementById('check-https').textContent = isHTTPS || isLocalhost ? '✅ Secure Context (HTTPS/localhost)' : '❌ Not HTTPS - WebAuthn requires HTTPS';
+document.getElementById('check-https').className = isHTTPS || isLocalhost ? 'check ok' : 'check fail';
+
+document.getElementById('check-webauthn').textContent = hasWebAuthn ? '✅ WebAuthn API available' : '❌ WebAuthn not supported';
+document.getElementById('check-webauthn').className = hasWebAuthn ? 'check ok' : 'check fail';
+
+if (hasWebAuthn) {
+    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(result => {
+            hasPlatformAuth = result;
+            document.getElementById('check-platform').textContent = result ? 
+                '✅ Platform authenticator available (Touch ID/Face ID/Windows Hello)' : 
+                '⚠️ No platform authenticator - Security key required';
+            document.getElementById('check-platform').className = result ? 'check ok' : 'check fail';
+        })
+        .catch(err => {
+            document.getElementById('check-platform').textContent = '⚠️ Cannot check platform auth: ' + err.message;
+            document.getElementById('check-platform').className = 'check fail';
+        });
+} else {
+    document.getElementById('check-platform').textContent = '⚠️ Skipped (WebAuthn not available)';
+}
+
 const API_BASE = window.location.origin;
 
 function base64urlDecode(str) {
@@ -64,6 +104,8 @@ async function startRegistration() {
     btn.disabled = true; btn.textContent = "Creating...";
 
     try {
+        showStatus("register-status", "Requesting challenge...", "info");
+        
         const startResp = await fetch(`${API_BASE}/api/auth/register/start`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -74,13 +116,17 @@ async function startRegistration() {
         const startData = await startResp.json();
         const options = JSON.parse(startData.options);
         
-        // Decode base64url to Uint8Array
+        showStatus("register-status", "Prompting for biometric...", "info");
+        
         options.challenge = base64urlDecode(options.challenge);
         options.user.id = base64urlDecode(options.user.id);
 
-        const credential = await navigator.credentials.create({ publicKey: options });
+        console.log("Registration options:", options);
 
-        // Encode to base64url
+        const credential = await navigator.credentials.create({ publicKey: options });
+        
+        showStatus("register-status", "Verifying credential...", "info");
+
         const finishData = {
             challenge_id: startData.challenge_id,
             email: email,
@@ -101,13 +147,16 @@ async function startRegistration() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(finishData)
         });
-        if (!finishResp.ok) throw new Error((await finishResp.json()).detail || "Failed");
+        if (!finishResp.ok) {
+            const errData = await finishResp.json();
+            throw new Error(errData.detail || "Failed");
+        }
 
-        showStatus("register-status", "Success! Passkey created.", "success");
+        showStatus("register-status", "✅ Passkey created successfully!", "success");
         setTimeout(() => showLogin(email), 1000);
     } catch (error) {
-        console.error(error);
-        showStatus("register-status", error.message, "error");
+        console.error("Registration error:", error);
+        showStatus("register-status", "Error: " + error.message, "error");
     } finally {
         btn.disabled = false; btn.textContent = "Create Passkey";
     }
@@ -121,6 +170,8 @@ async function startLogin() {
     btn.disabled = true; btn.textContent = "Authenticating...";
 
     try {
+        showStatus("login-status", "Requesting challenge...", "info");
+        
         const startResp = await fetch(`${API_BASE}/api/auth/login/start`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -131,7 +182,8 @@ async function startLogin() {
         const startData = await startResp.json();
         const options = JSON.parse(startData.options);
         
-        // Decode base64url to Uint8Array
+        showStatus("login-status", "Prompting for biometric...", "info");
+        
         options.challenge = base64urlDecode(options.challenge);
         
         if (options.allowCredentials) {
@@ -141,9 +193,12 @@ async function startLogin() {
             }));
         }
 
-        const assertion = await navigator.credentials.get({ publicKey: options });
+        console.log("Login options:", options);
 
-        // Encode to base64url
+        const assertion = await navigator.credentials.get({ publicKey: options });
+        
+        showStatus("login-status", "Verifying credential...", "info");
+
         const finishData = {
             challenge_id: startData.challenge_id,
             credential: {
@@ -165,12 +220,15 @@ async function startLogin() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(finishData)
         });
-        if (!finishResp.ok) throw new Error((await finishResp.json()).detail || "Failed");
+        if (!finishResp.ok) {
+            const errData = await finishResp.json();
+            throw new Error(errData.detail || "Failed");
+        }
 
-        showStatus("login-status", "Success! Authenticated.", "success");
+        showStatus("login-status", "✅ Authentication successful!", "success");
     } catch (error) {
-        console.error(error);
-        showStatus("login-status", error.message, "error");
+        console.error("Login error:", error);
+        showStatus("login-status", "Error: " + error.message, "error");
     } finally {
         btn.disabled = false; btn.textContent = "Sign In with Passkey";
     }
