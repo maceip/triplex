@@ -11,6 +11,7 @@ h1 { font-size: 32px; margin-bottom: 10px; }
 .subtitle { color: #888; margin-bottom: 40px; }
 input { width: 100%; padding: 16px; margin-bottom: 16px; border: 1px solid #333; border-radius: 8px; background: #1a1a1a; color: #fff; font-size: 16px; }
 button { width: 100%; padding: 16px; background: #007AFF; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-bottom: 12px; }
+button:disabled { background: #555; cursor: not-allowed; }
 .status { padding: 16px; background: #1a1a1a; border-radius: 8px; margin-top: 20px; display: none; }
 .status.success { border-left: 4px solid #34C759; }
 .status.error { border-left: 4px solid #FF3B30; }
@@ -42,12 +43,17 @@ button { width: 100%; padding: 16px; background: #007AFF; color: #fff; border: n
 <script>
 const API_BASE = window.location.origin;
 
-function bufferDecode(value) {
-    return Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+function base64urlDecode(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    return Uint8Array.from(atob(str), c => c.charCodeAt(0));
 }
 
-function bufferEncode(value) {
-    return btoa(String.fromCharCode.apply(null, new Uint8Array(value))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+function base64urlEncode(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 async function startRegistration() {
@@ -64,24 +70,29 @@ async function startRegistration() {
             body: JSON.stringify({ email })
         });
         if (!startResp.ok) throw new Error((await startResp.json()).detail || "Failed");
+        
         const startData = await startResp.json();
         const options = JSON.parse(startData.options);
-        options.challenge = bufferDecode(options.challenge);
-        options.user.id = bufferDecode(options.user.id);
+        
+        // Decode base64url to Uint8Array
+        options.challenge = base64urlDecode(options.challenge);
+        options.user.id = base64urlDecode(options.user.id);
 
         const credential = await navigator.credentials.create({ publicKey: options });
 
+        // Encode to base64url
         const finishData = {
             challenge_id: startData.challenge_id,
             email: email,
             credential: {
                 id: credential.id,
-                rawId: bufferEncode(credential.response.attestationObject),
+                rawId: base64urlEncode(credential.rawId),
                 response: {
-                    attestationObject: bufferEncode(credential.response.attestationObject),
-                    clientDataJSON: bufferEncode(credential.response.clientDataJSON),
+                    attestationObject: base64urlEncode(credential.response.attestationObject),
+                    clientDataJSON: base64urlEncode(credential.response.clientDataJSON),
                 },
                 type: credential.type,
+                clientExtensionResults: credential.clientExtensionResults || {},
             }
         };
 
@@ -93,8 +104,9 @@ async function startRegistration() {
         if (!finishResp.ok) throw new Error((await finishResp.json()).detail || "Failed");
 
         showStatus("register-status", "Success! Passkey created.", "success");
-        setTimeout(() => showLogin(), 1000);
+        setTimeout(() => showLogin(email), 1000);
     } catch (error) {
+        console.error(error);
         showStatus("register-status", error.message, "error");
     } finally {
         btn.disabled = false; btn.textContent = "Create Passkey";
@@ -115,24 +127,36 @@ async function startLogin() {
             body: JSON.stringify({ email })
         });
         if (!startResp.ok) throw new Error((await startResp.json()).detail || "Failed");
+        
         const startData = await startResp.json();
         const options = JSON.parse(startData.options);
-        options.challenge = bufferDecode(options.challenge);
+        
+        // Decode base64url to Uint8Array
+        options.challenge = base64urlDecode(options.challenge);
+        
+        if (options.allowCredentials) {
+            options.allowCredentials = options.allowCredentials.map(cred => ({
+                ...cred,
+                id: base64urlDecode(cred.id)
+            }));
+        }
 
         const assertion = await navigator.credentials.get({ publicKey: options });
 
+        // Encode to base64url
         const finishData = {
             challenge_id: startData.challenge_id,
             credential: {
                 id: assertion.id,
-                rawId: bufferEncode(assertion.response.authenticatorData),
+                rawId: base64urlEncode(assertion.rawId),
                 response: {
-                    authenticatorData: bufferEncode(assertion.response.authenticatorData),
-                    clientDataJSON: bufferEncode(assertion.response.clientDataJSON),
-                    signature: bufferEncode(assertion.response.signature),
-                    userHandle: bufferEncode(assertion.response.userHandle),
+                    authenticatorData: base64urlEncode(assertion.response.authenticatorData),
+                    clientDataJSON: base64urlEncode(assertion.response.clientDataJSON),
+                    signature: base64urlEncode(assertion.response.signature),
+                    userHandle: assertion.response.userHandle ? base64urlEncode(assertion.response.userHandle) : null,
                 },
                 type: assertion.type,
+                clientExtensionResults: assertion.clientExtensionResults || {},
             }
         };
 
@@ -145,6 +169,7 @@ async function startLogin() {
 
         showStatus("login-status", "Success! Authenticated.", "success");
     } catch (error) {
+        console.error(error);
         showStatus("login-status", error.message, "error");
     } finally {
         btn.disabled = false; btn.textContent = "Sign In with Passkey";
@@ -156,9 +181,10 @@ function showStatus(id, msg, type) {
     el.textContent = msg; el.className = "status " + type; el.style.display = "block";
 }
 
-function showLogin() {
+function showLogin(email = "") {
     document.getElementById("register-section").style.display = "none";
     document.getElementById("login-section").style.display = "block";
+    if (email) document.getElementById("login-email").value = email;
 }
 
 function showRegister() {
