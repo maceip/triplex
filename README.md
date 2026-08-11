@@ -129,6 +129,16 @@ using, and why. Then:
   ones we turned down and why.
 - `docs/DECISION_TTS_PLACEMENT.md` — the speech measurements and what we chose.
 
+## CI
+
+GitHub Actions runs Triplex CI on every push and pull request to `main`
+(workflow: `.github/workflows/ci.yml`). Independent jobs cover the RT
+allocation guard, agent-core, transport validation, gateway tests, the
+conversation loop, and Android JVM unit tests; an evidence gate aggregates
+the artifacts. Details live in `.github/workflows/README.md`.
+
+CI status probe: 4 (second green verification after full gate pass).
+
 ## A rule worth knowing
 
 We do not claim something works until we have seen it work for real: on a

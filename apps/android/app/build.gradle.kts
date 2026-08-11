@@ -23,7 +23,10 @@ android {
 
     defaultConfig {
         applicationId = "dev.triplex"
-        minSdk = 29
+        // RikkaUI components (sibling composite / current tip) declare minSdk 33.
+        // The spike previously targeted API 29; keep telephony libraries at 29
+        // until the product floor is decided, but the UI shell must match RikkaUI.
+        minSdk = 33
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -57,10 +60,18 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    // CI sets -Ptriplex.skipNative=true so JVM unit tests can run without the
+    // PJSIP/Mbed TLS stage from apps/android/scripts/prepare-native.sh.
+    val skipNative = providers.gradleProperty("triplex.skipNative")
+        .getOrElse("false")
+        .equals("true", ignoreCase = true)
+
+    if (!skipNative) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -69,10 +80,12 @@ android {
             // Matches the prepared telephony native stage, which is arm64-only.
             abiFilters += listOf("arm64-v8a")
         }
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
-                arguments += listOf("-DANDROID_STL=c++_static")
+        if (!skipNative) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
+                    arguments += listOf("-DANDROID_STL=c++_static")
+                }
             }
         }
     }

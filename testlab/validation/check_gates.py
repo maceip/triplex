@@ -25,14 +25,22 @@ def main():
         manifest = json.load(f)
     
     gates = manifest.get("gates", {})
-    
-    all_passed = all(gates.values()) if gates else False
-    
+
+    def gate_passed(status) -> bool:
+        # Manifest historically stored strings ("passed"/"failed"); accept bools too.
+        if isinstance(status, bool):
+            return status
+        if isinstance(status, str):
+            return status.lower() in {"passed", "pass", "true", "ok"}
+        return False
+
+    all_passed = bool(gates) and all(gate_passed(status) for status in gates.values())
+
     print("\nGate Status:")
     for gate, status in gates.items():
-        icon = "✅" if status == "passed" else "❌"
+        icon = "✅" if gate_passed(status) else "❌"
         print(f"  {icon} {gate}: {status}")
-    
+
     if all_passed:
         print("\n✅ All gates PASSED - Evidence accepted")
         sys.exit(0)

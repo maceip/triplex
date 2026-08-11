@@ -35,7 +35,10 @@ includeBuild("dialogue") {
 }
 include(":telephony-plivo")
 include(":telemetry-client")
-project(":telemetry-client").projectDir = file("../../../triplex-analytics/android/telemetry-client")
+// Local sibling checkout by default; CI overrides with -PtelemetryClientPath=…
+val telemetryClientPath = providers.gradleProperty("telemetryClientPath")
+    .getOrElse("../../../triplex-analytics/android/telemetry-client")
+project(":telemetry-client").projectDir = file(telemetryClientPath)
 
 // RikkaUI is consumed from source, not from Maven: the design system and this
 // app move together, so a published snapshot would always be one step behind.
