@@ -16,18 +16,22 @@ class DebugSipProvisioningReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_PROVISION_SIP) return
         val username = intent.getStringExtra(EXTRA_USERNAME).orEmpty()
         val password = intent.getStringExtra(EXTRA_PASSWORD).orEmpty()
-        if (username.isBlank() || password.length < 5) {
+        val domain = intent.getStringExtra(EXTRA_DOMAIN).orEmpty()
+            .ifBlank { "phone.plivo.com" }
+        if (username.isBlank() || password.length < 5 || domain.isBlank()) {
             Timber.e("Rejected incomplete debug SIP provisioning")
             return
         }
         secureStorage.setPlivoUsername(username)
         secureStorage.setPlivoPassword(password)
-        Timber.i("Provisioned debug SIP endpoint %s", username)
+        secureStorage.setPlivoDomain(domain)
+        Timber.i("Provisioned debug SIP endpoint %s@%s", username, domain)
     }
 
     private companion object {
         const val ACTION_PROVISION_SIP = "dev.triplex.debug.PROVISION_SIP"
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
+        const val EXTRA_DOMAIN = "domain"
     }
 }

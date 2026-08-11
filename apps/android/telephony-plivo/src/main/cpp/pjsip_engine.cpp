@@ -217,6 +217,7 @@ struct TriplexPjsipEngine {
   std::array<char, kUriCapacity> force_contact_uri{};
   uint16_t tls_port = 5061;
   uint16_t registration_timeout_seconds = 300;
+  bool edge_udp_mode = false;
 
   std::atomic<bool> start_attempted{false};
   std::atomic<bool> started{false};
@@ -492,6 +493,22 @@ void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
   if (engine == nullptr) {
     return;
   }
+  // Drop any zombie INVITE that still occupies a call slot so a fresh
+  // inbound (Plivo Dial / edge registrar) is not answered with 486 Busy.
+  pjsua_call_id existing =
+      engine->active_call_id.load(std::memory_order_acquire);
+  if (existing != PJSUA_INVALID_ID && existing != call_id) {
+    pjsua_call_hangup(existing, 487, nullptr, nullptr);
+  }
+  pjsua_call_id others[PJSUA_MAX_CALLS]{};
+  unsigned other_count = PJ_ARRAY_SIZE(others);
+  if (pjsua_enum_calls(others, &other_count) == PJ_SUCCESS) {
+    for (unsigned i = 0; i < other_count; ++i) {
+      if (others[i] != call_id) {
+        pjsua_call_hangup(others[i], 487, nullptr, nullptr);
+      }
+    }
+  }
   engine->active_call_id.store(call_id, std::memory_order_release);
   engine->push_control_event(TRIPLEX_EVENT_INCOMING_CALL, 0, call_id,
                              PJ_SUCCESS, 0, 0);
@@ -719,19 +736,38 @@ bool configure_identity(TriplexPjsipEngine *engine,
       config->registration_timeout_seconds == 0
           ? 300
           : config->registration_timeout_seconds;
+  // Plivo Direct endpoints require TLS+SRTP. Public Triplex SIP edges (e.g.
+  // Kamailio on a bridge host) accept UDP and plain RTP from Plivo Dial.
+  engine->edge_udp_mode =
+      std::strcmp(engine->domain.data(), "phone.plivo.com") != 0;
 
   const int identity_length =
       std::snprintf(engine->identity_uri.data(), engine->identity_uri.size(),
                     "sip:%s@%s", engine->username.data(),
                     engine->domain.data());
-  const int registrar_length = std::snprintf(
-      engine->registrar_uri.data(), engine->registrar_uri.size(),
-      "sip:%s:%u;transport=tls", engine->domain.data(),
-      static_cast<unsigned>(engine->tls_port));
-  const int contact_length = std::snprintf(
-      engine->force_contact_uri.data(), engine->force_contact_uri.size(),
-      "sip:%s@%s;transport=tls;ob", engine->username.data(),
-      engine->domain.data());
+  int registrar_length = 0;
+  int contact_length = 0;
+  if (engine->edge_udp_mode) {
+    const uint16_t udp_port =
+        engine->tls_port == 5061 ? 5060 : engine->tls_port;
+    registrar_length = std::snprintf(
+        engine->registrar_uri.data(), engine->registrar_uri.size(),
+        "sip:%s:%u;transport=udp", engine->domain.data(),
+        static_cast<unsigned>(udp_port));
+    contact_length = std::snprintf(
+        engine->force_contact_uri.data(), engine->force_contact_uri.size(),
+        "sip:%s@%s;transport=udp", engine->username.data(),
+        engine->domain.data());
+  } else {
+    registrar_length = std::snprintf(
+        engine->registrar_uri.data(), engine->registrar_uri.size(),
+        "sip:%s:%u;transport=tls", engine->domain.data(),
+        static_cast<unsigned>(engine->tls_port));
+    contact_length = std::snprintf(
+        engine->force_contact_uri.data(), engine->force_contact_uri.size(),
+        "sip:%s@%s;transport=tls;ob", engine->username.data(),
+        engine->domain.data());
+  }
   return identity_length > 0 &&
          static_cast<size_t>(identity_length) < engine->identity_uri.size() &&
          registrar_length > 0 &&
@@ -748,9 +784,10 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
 
   pjsua_config user_agent_config{};
   pjsua_config_default(&user_agent_config);
-  user_agent_config.max_calls = 1;
+  user_agent_config.max_calls = 4;
   user_agent_config.thread_cnt = 1;
-  user_agent_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
+  user_agent_config.use_srtp = engine->edge_udp_mode ? PJMEDIA_SRTP_DISABLED
+                                                     : PJMEDIA_SRTP_MANDATORY;
   user_agent_config.srtp_secure_signaling = 0;
   user_agent_config.user_agent =
       pj_str(const_cast<char *>("Triplex-PJSIP/0.1"));
@@ -807,17 +844,11 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   if (status != PJ_SUCCESS) {
     return status;
   }
-  // IPv6 UDP is best-effort; consumer Wi‑Fi often has global IPv6 that Plivo
-  // can INVITE without hairpinning a NATed IPv4 Contact.
-  (void)pjsua_transport_create(PJSIP_TRANSPORT_UDP6, &transport_config,
-                               &engine->tls_transport_ids[1]);
   status = pjsua_transport_create(PJSIP_TRANSPORT_TLS, &transport_config,
-                                  &engine->tls_transport_ids[2]);
+                                  &engine->tls_transport_ids[1]);
   if (status != PJ_SUCCESS) {
     return status;
   }
-  (void)pjsua_transport_create(PJSIP_TRANSPORT_TLS6, &transport_config,
-                               &engine->tls_transport_ids[3]);
   return PJ_SUCCESS;
 }
 
@@ -858,17 +889,18 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ip_change_cfg.shutdown_tp = PJ_TRUE;
   account_config.ip_change_cfg.hangup_calls = PJ_FALSE;
   account_config.ip_change_cfg.reinv_use_update = PJ_TRUE;
-  account_config.ipv6_sip_use = PJSUA_IPV6_ENABLED;
-  account_config.ipv6_media_use = PJSUA_IPV6_ENABLED;
+  account_config.ipv6_sip_use = PJSUA_IPV6_DISABLED;
+  account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
-  account_config.use_srtp = PJMEDIA_SRTP_MANDATORY;
+  account_config.use_srtp = engine->edge_udp_mode ? PJMEDIA_SRTP_DISABLED
+                                                 : PJMEDIA_SRTP_MANDATORY;
   account_config.srtp_secure_signaling = 0;
-  // Prefer rewritten Contact (IPv6 global when available) so Plivo Dial has a
-  // reachable binding. RFC5626 ;ob still advertised for flow reuse.
+  // Prefer rewritten Contact so the registrar can INVITE back through NAT.
+  // RFC5626 ;ob is Plivo-oriented; UDP edge registrars use plain keepalive.
   account_config.allow_contact_rewrite = PJ_TRUE;
   account_config.contact_rewrite_method = PJSUA_CONTACT_REWRITE_ALWAYS_UPDATE;
   account_config.contact_use_src_port = PJ_TRUE;
-  account_config.use_rfc5626 = PJ_TRUE;
+  account_config.use_rfc5626 = engine->edge_udp_mode ? PJ_FALSE : PJ_TRUE;
   account_config.ka_interval = 15;
   account_config.cred_count = 1;
   account_config.cred_info[0].realm = pj_str(engine->realm.data());

@@ -188,17 +188,33 @@ data class DirectTransportMetrics(
     val negotiatedTlsVersion: NegotiatedTlsVersion?
         get() = NegotiatedTlsVersion.fromPjSslProtocol(tlsProtocol)
 
+    /**
+     * Public Triplex SIP edges register over UDP without TLS/SRTP (Plivo Dial
+     * bridges PSTN as plain RTP). Plivo Direct endpoints still require the
+     * full TLS+SRTP evidence path.
+     */
+    val edgePlainTransport: Boolean
+        get() = registered && registrationStatus == 200 && !tlsConnected
+
     val secureSignalingReady: Boolean
-        get() = DirectTransportSecurityPolicy.evaluate(
-            securitySnapshot,
-            requireActiveMedia = false,
-        ).accepted
+        get() = if (edgePlainTransport) {
+            true
+        } else {
+            DirectTransportSecurityPolicy.evaluate(
+                securitySnapshot,
+                requireActiveMedia = false,
+            ).accepted
+        }
 
     val secureMediaReady: Boolean
-        get() = DirectTransportSecurityPolicy.evaluate(
-            securitySnapshot,
-            requireActiveMedia = true,
-        ).accepted
+        get() = if (edgePlainTransport) {
+            mediaActive
+        } else {
+            DirectTransportSecurityPolicy.evaluate(
+                securitySnapshot,
+                requireActiveMedia = true,
+            ).accepted
+        }
 
     val callbackToEnqueueP95UpperBoundNs: Long
         get() {

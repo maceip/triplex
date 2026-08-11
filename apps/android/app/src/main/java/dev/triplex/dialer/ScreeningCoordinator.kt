@@ -110,13 +110,16 @@ class ScreeningCoordinator @Inject constructor(
             launch {
                 telephonyController.conversationTurns.collect(sipCallSource::publishConversation)
             }
-            userRepository.syncSipCredentials()
+            if (secureStorage.getPlivoDomain() == "phone.plivo.com") {
+                userRepository.syncSipCredentials()
+            }
             val sipReady = telephonyController.initialize() && telephonyController.registerSip()
             val username = secureStorage.getPlivoUsername()
             if (!sipReady || username.isNullOrBlank()) {
                 _message.value = "Secure Plivo SIP registration is not ready"
             } else {
-                val endpoint = "sip:$username@phone.plivo.com"
+                val domain = secureStorage.getPlivoDomain()
+                val endpoint = "sip:$username@$domain"
                 userRepository.registerDevice(endpoint, pushToken = null)
                 launch { publishReadiness() }
             }

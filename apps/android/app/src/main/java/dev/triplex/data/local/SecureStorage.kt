@@ -70,6 +70,16 @@ class SecureStorage @Inject constructor(
         encryptedPrefs.edit().putString("plivo_sip_password", password).apply()
     }
 
+    fun getPlivoDomain(): String {
+        return encryptedPrefs.getString("plivo_sip_domain", null)
+            ?.takeIf { it.isNotBlank() }
+            ?: "phone.plivo.com"
+    }
+
+    fun setPlivoDomain(domain: String) {
+        encryptedPrefs.edit().putString("plivo_sip_domain", domain.trim()).apply()
+    }
+
     fun getVoiceProfileRef(): String? {
         return encryptedPrefs.getString("voice_profile_ref", null)
     }

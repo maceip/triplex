@@ -176,6 +176,7 @@ class TelephonyController @Inject constructor(
 
         val username = secureStorage.getPlivoUsername()
         val password = secureStorage.getPlivoPassword()
+        val domain = secureStorage.getPlivoDomain()
         if (username.isNullOrBlank() || password.isNullOrBlank()) {
             Timber.w("No Plivo SIP credentials stored; telephony unavailable")
             _sipState.value = SipState.NO_CREDENTIALS
@@ -190,7 +191,10 @@ class TelephonyController @Inject constructor(
                     SipRegistrationConfig(
                         usernameUtf8 = username.encodeToByteArray(),
                         passwordUtf8 = password.encodeToByteArray(),
+                        domainUtf8 = domain.encodeToByteArray(),
+                        realmUtf8 = domain.encodeToByteArray(),
                         caBundlePath = caBundle,
+                        tlsPort = if (domain == "phone.plivo.com") 5061 else 5060,
                     )
                 ).get()
                 if (status != 0) {
