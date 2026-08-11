@@ -182,6 +182,11 @@ class TelephonyController @Inject constructor(
             _sipState.value = SipState.NO_CREDENTIALS
             return false
         }
+        if (domain != "phone.plivo.com") {
+            Timber.e("Rejecting non-Plivo SIP domain %s", domain)
+            _sipState.value = SipState.FAILED
+            return false
+        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -194,7 +199,7 @@ class TelephonyController @Inject constructor(
                         domainUtf8 = domain.encodeToByteArray(),
                         realmUtf8 = domain.encodeToByteArray(),
                         caBundlePath = caBundle,
-                        tlsPort = if (domain == "phone.plivo.com") 5061 else 5060,
+                        tlsPort = 5060,
                     )
                 ).get()
                 if (status != 0) {
@@ -296,8 +301,12 @@ class TelephonyController @Inject constructor(
                         Timber.i("Auto-answer disabled; leaving call %d ringing", event.callId)
                         return@launch
                     }
-                    if (ensureAsrStarted() && activeCallId == event.callId) {
+                    if (activeCallId == event.callId) {
                         answer()
+                        // Best-effort ASR after the SIP 200 — never block answer.
+                        if (!ensureAsrStarted()) {
+                            Timber.e("SODA failed to start for live call ASR")
+                        }
                     }
                 }
             }
@@ -523,9 +532,12 @@ class TelephonyController @Inject constructor(
     }
 
     private fun ensureAsrStarted(): Boolean {
-        return callTranscriber.startCall().also { ok ->
-            if (!ok) Timber.e("SODA failed to start for live call ASR")
-        }
+        return runCatching { callTranscriber.startCall() }
+            .onFailure { Timber.e(it, "SODA failed to start for live call ASR") }
+            .getOrDefault(false)
+            .also { ok ->
+                if (!ok) Timber.e("SODA failed to start for live call ASR")
+            }
     }
 
     private suspend fun resolveCallVoice(): CallVoice {
@@ -684,7 +696,6 @@ class TelephonyController @Inject constructor(
         if (callId < 0) {
             return false
         }
-        ensureAsrStarted()
         sip.answer(callId)
         return true
     }

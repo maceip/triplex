@@ -1,5 +1,7 @@
 package dev.triplex.ui.shell
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -229,35 +231,43 @@ private fun ShellNavHost(
 ) {
     val motion = TriplexDesign.motion
 
+    // Nested Agent pushes keep a short fade/slide; top-level Keypad ↔ Agent
+    // tab switches stay instant so the glass pill alone carries the motion cue
+    // (a second NavHost fade felt like lag on mid-range devices).
+    val nestedEnter = {
+        fadeIn(tween(motion.standardMillis)) +
+            slideInHorizontally(tween(motion.standardMillis)) { width -> width / 10 }
+    }
+    val nestedExit = {
+        fadeOut(tween(motion.quickMillis)) +
+            slideOutHorizontally(tween(motion.standardMillis)) { width -> -width / 16 }
+    }
+    val nestedPopEnter = {
+        fadeIn(tween(motion.standardMillis)) +
+            scaleIn(
+                animationSpec = tween(motion.standardMillis),
+                initialScale = motion.navigationScale,
+            )
+    }
+    // Navigation Compose drives this transition interactively during the
+    // system back gesture, revealing the destination underneath.
+    val nestedPopExit = {
+        fadeOut(tween(motion.standardMillis)) +
+            scaleOut(
+                animationSpec = tween(motion.standardMillis),
+                targetScale = motion.navigationScale,
+                transformOrigin = TransformOrigin.Center,
+            )
+    }
+
     NavHost(
         navController = navController,
         startDestination = ShellRoute.Keypad,
         modifier = modifier,
-        enterTransition = {
-            fadeIn(tween(motion.standardMillis)) +
-                slideInHorizontally(tween(motion.standardMillis)) { width -> width / 10 }
-        },
-        exitTransition = {
-            fadeOut(tween(motion.quickMillis)) +
-                slideOutHorizontally(tween(motion.standardMillis)) { width -> -width / 16 }
-        },
-        popEnterTransition = {
-            fadeIn(tween(motion.standardMillis)) +
-                scaleIn(
-                    animationSpec = tween(motion.standardMillis),
-                    initialScale = motion.navigationScale,
-                )
-        },
-        // Navigation Compose drives this transition interactively during the
-        // system back gesture, revealing the destination underneath.
-        popExitTransition = {
-            fadeOut(tween(motion.standardMillis)) +
-                scaleOut(
-                    animationSpec = tween(motion.standardMillis),
-                    targetScale = motion.navigationScale,
-                    transformOrigin = TransformOrigin.Center,
-                )
-        },
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None },
     ) {
         composable<ShellRoute.Keypad> {
             keypadContent { navController.switchTab(ShellRoute.AgentGraph) }
@@ -282,27 +292,47 @@ private fun ShellNavHost(
                 }
             }
 
-            composable<ShellRoute.AgentInbound> {
+            composable<ShellRoute.AgentInbound>(
+                enterTransition = { nestedEnter() },
+                exitTransition = { nestedExit() },
+                popEnterTransition = { nestedPopEnter() },
+                popExitTransition = { nestedPopExit() },
+            ) {
                 InboundSetupScreen(
                     onBack = { navController.popBackStack() },
                     onOpenVoice = { navController.navigate(ShellRoute.AgentVoice) },
                 )
             }
 
-            composable<ShellRoute.AgentOutbound> {
+            composable<ShellRoute.AgentOutbound>(
+                enterTransition = { nestedEnter() },
+                exitTransition = { nestedExit() },
+                popEnterTransition = { nestedPopEnter() },
+                popExitTransition = { nestedPopExit() },
+            ) {
                 OutboundSetupScreen(
                     onBack = { navController.popBackStack() },
                     onOpenVoice = { navController.navigate(ShellRoute.AgentVoice) },
                 )
             }
 
-            composable<ShellRoute.AgentVoice> {
+            composable<ShellRoute.AgentVoice>(
+                enterTransition = { nestedEnter() },
+                exitTransition = { nestedExit() },
+                popEnterTransition = { nestedPopEnter() },
+                popExitTransition = { nestedPopExit() },
+            ) {
                 VoiceCloneScreen(onBack = { navController.popBackStack() })
             }
 
             // The run id is read from the route by RunDetailViewModel's
             // SavedStateHandle, so nothing needs to be threaded through here.
-            composable<ShellRoute.AgentRunDetail> {
+            composable<ShellRoute.AgentRunDetail>(
+                enterTransition = { nestedEnter() },
+                exitTransition = { nestedExit() },
+                popEnterTransition = { nestedPopEnter() },
+                popExitTransition = { nestedPopExit() },
+            ) {
                 RunDetailScreen(onBack = { navController.popBackStack() })
             }
         }

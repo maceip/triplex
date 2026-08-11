@@ -217,7 +217,8 @@ struct TriplexPjsipEngine {
   std::array<char, kUriCapacity> force_contact_uri{};
   uint16_t tls_port = 5061;
   uint16_t registration_timeout_seconds = 300;
-  bool edge_udp_mode = false;
+  pjsua_transport_id tls_transport_id = PJSUA_INVALID_ID;
+  std::atomic<bool> flow_recovery_pending{false};
 
   std::atomic<bool> start_attempted{false};
   std::atomic<bool> started{false};
@@ -477,16 +478,31 @@ void on_registration_state(pjsua_acc_id account_id, pjsua_reg_info *info) {
   pjsua_acc_info account_info{};
   if (pjsua_acc_get_info(account_id, &account_info) == PJ_SUCCESS) {
     code = static_cast<uint16_t>(account_info.status);
-  engine->registered.store(account_info.status == PJSIP_SC_OK,
-                           std::memory_order_release);
-  if (account_info.status == PJSIP_SC_OK) {
-    pjsua_call_hangup_all();
-    engine->active_call_id.store(PJSUA_INVALID_ID, std::memory_order_release);
-  }
+    engine->registered.store(account_info.status == PJSIP_SC_OK,
+                             std::memory_order_release);
+    if (account_info.status == PJSIP_SC_OK) {
+      pjsua_call_hangup_all();
+      engine->active_call_id.store(PJSUA_INVALID_ID, std::memory_order_release);
+    }
   }
   engine->registration_status.store(code, std::memory_order_release);
   engine->push_control_event(TRIPLEX_EVENT_REGISTRATION, code, PJSUA_INVALID_ID,
                              status, 0, 0);
+  // Dead TLS flow / NAT mapping often surfaces as 408. Recover immediately
+  // instead of waiting for the full registration expiry window.
+  if (code == PJSIP_SC_REQUEST_TIMEOUT || code == PJSIP_SC_SERVICE_UNAVAILABLE) {
+    bool expected = false;
+    if (engine->flow_recovery_pending.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+      pjsua_ip_change_param param{};
+      pjsua_ip_change_param_default(&param);
+      param.restart_listener = PJ_TRUE;
+      (void)pjsua_handle_ip_change(&param);
+      engine->flow_recovery_pending.store(false, std::memory_order_release);
+    }
+  } else if (code == PJSIP_SC_OK) {
+    engine->flow_recovery_pending.store(false, std::memory_order_release);
+  }
 }
 
 void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
@@ -498,7 +514,7 @@ void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
     return;
   }
   // Drop any zombie INVITE that still occupies a call slot so a fresh
-  // inbound (Plivo Dial / edge registrar) is not answered with 486 Busy.
+  // inbound Plivo Dial is not answered with 486 Busy.
   pjsua_call_id others[PJSUA_MAX_CALLS]{};
   unsigned other_count = PJ_ARRAY_SIZE(others);
   if (pjsua_enum_calls(others, &other_count) == PJ_SUCCESS) {
@@ -511,11 +527,6 @@ void on_incoming_call(pjsua_acc_id account_id, pjsua_call_id call_id,
   engine->active_call_id.store(call_id, std::memory_order_release);
   engine->push_control_event(TRIPLEX_EVENT_INCOMING_CALL, 0, call_id,
                              PJ_SUCCESS, 0, 0);
-  // Edge UDP calls must not sit unanswered: PJSUA_MAX_CALLS may be 1 in older
-  // native stages, and a late Plivo Dial then gets 486 Busy Here.
-  if (engine->edge_udp_mode) {
-    (void)pjsua_call_answer(call_id, 200, nullptr, nullptr);
-  }
 }
 
 void disconnect_media(TriplexPjsipEngine *engine) {
@@ -685,6 +696,22 @@ void on_transport_state(pjsip_transport *transport, pjsip_transport_state state,
   engine->push_control_event(
       TRIPLEX_EVENT_TRANSPORT_STATE, static_cast<uint16_t>(state),
       PJSUA_INVALID_ID, status, static_cast<int32_t>(protocol), verify_status);
+  // Plivo inbound INVITEs require a live client-initiated TLS flow. When the
+  // last secure transport dies without an IP-change callback, rebuild and
+  // re-REGISTER immediately (same class of fix as dead-socket recovery).
+  if (lifecycle_state_changed &&
+      !engine->secure_transport_lifecycle.has_connected_transport() &&
+      engine->account_id != PJSUA_INVALID_ID) {
+    bool expected = false;
+    if (engine->flow_recovery_pending.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+      pjsua_ip_change_param param{};
+      pjsua_ip_change_param_default(&param);
+      param.restart_listener = PJ_TRUE;
+      (void)pjsua_handle_ip_change(&param);
+      engine->flow_recovery_pending.store(false, std::memory_order_release);
+    }
+  }
 }
 
 void on_conference_operation(const pjmedia_conf_op_info *info) {
@@ -727,6 +754,10 @@ bool configure_identity(TriplexPjsipEngine *engine,
                  config->ca_bundle_path)) {
     return false;
   }
+  // Plivo Direct only — no host SIP edge / UDP registrar path.
+  if (std::strcmp(engine->domain.data(), "phone.plivo.com") != 0) {
+    return false;
+  }
   if (config->realm != nullptr && config->realm[0] != '\0') {
     if (!copy_text(engine->realm.data(), engine->realm.size(), config->realm)) {
       return false;
@@ -735,49 +766,29 @@ bool configure_identity(TriplexPjsipEngine *engine,
                         config->domain)) {
     return false;
   }
-  engine->tls_port = config->tls_port == 0 ? 5061 : config->tls_port;
+  engine->tls_port = config->tls_port == 0 ? 5060 : config->tls_port;
   engine->registration_timeout_seconds =
       config->registration_timeout_seconds == 0
-          ? 300
+          ? 120
           : config->registration_timeout_seconds;
-  // Plivo Direct endpoints require TLS+SRTP. Public Triplex SIP edges (e.g.
-  // Kamailio on a bridge host) accept UDP and plain RTP from Plivo Dial.
-  engine->edge_udp_mode =
-      std::strcmp(engine->domain.data(), "phone.plivo.com") != 0;
 
   const int identity_length =
       std::snprintf(engine->identity_uri.data(), engine->identity_uri.size(),
                     "sip:%s@%s", engine->username.data(),
                     engine->domain.data());
-  int registrar_length = 0;
-  int contact_length = 0;
-  if (engine->edge_udp_mode) {
-    const uint16_t udp_port =
-        engine->tls_port == 5061 ? 5060 : engine->tls_port;
-    registrar_length = std::snprintf(
-        engine->registrar_uri.data(), engine->registrar_uri.size(),
-        "sip:%s:%u;transport=udp", engine->domain.data(),
-        static_cast<unsigned>(udp_port));
-    contact_length = std::snprintf(
-        engine->force_contact_uri.data(), engine->force_contact_uri.size(),
-        "sip:%s@%s;transport=udp", engine->username.data(),
-        engine->domain.data());
-  } else {
-    registrar_length = std::snprintf(
-        engine->registrar_uri.data(), engine->registrar_uri.size(),
-        "sip:%s:%u;transport=tls", engine->domain.data(),
-        static_cast<unsigned>(engine->tls_port));
-    contact_length = std::snprintf(
-        engine->force_contact_uri.data(), engine->force_contact_uri.size(),
-        "sip:%s@%s;transport=tls;ob", engine->username.data(),
-        engine->domain.data());
-  }
+  // Plivo Endpoint Dial dials the Contact host:port instead of reusing the
+  // client TLS registration flow (Network Error on NATed TLS Contacts even
+  // with RFC5626 ;ob). UDP REGISTER + keepalive keeps a NAT mapping that
+  // Plivo can INVITE into — still Plivo Direct, no host SIP edge.
+  const int registrar_length = std::snprintf(
+      engine->registrar_uri.data(), engine->registrar_uri.size(),
+      "sip:%s:%u;transport=udp", engine->domain.data(),
+      static_cast<unsigned>(engine->tls_port == 5061 ? 5060 : engine->tls_port));
+  engine->force_contact_uri[0] = '\0';
   return identity_length > 0 &&
          static_cast<size_t>(identity_length) < engine->identity_uri.size() &&
          registrar_length > 0 &&
-         static_cast<size_t>(registrar_length) < engine->registrar_uri.size() &&
-         contact_length > 0 &&
-         static_cast<size_t>(contact_length) < engine->force_contact_uri.size();
+         static_cast<size_t>(registrar_length) < engine->registrar_uri.size();
 }
 
 pj_status_t initialize_library(TriplexPjsipEngine *engine) {
@@ -790,8 +801,9 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   pjsua_config_default(&user_agent_config);
   user_agent_config.max_calls = 4;
   user_agent_config.thread_cnt = 1;
-  user_agent_config.use_srtp = engine->edge_udp_mode ? PJMEDIA_SRTP_DISABLED
-                                                     : PJMEDIA_SRTP_MANDATORY;
+  // Prefer SRTP when the peer offers it; Plivo Direct UDP inbound may land
+  // plain RTP depending on account settings.
+  user_agent_config.use_srtp = PJMEDIA_SRTP_OPTIONAL;
   user_agent_config.srtp_secure_signaling = 0;
   user_agent_config.user_agent =
       pj_str(const_cast<char *>("Triplex-PJSIP/0.1"));
@@ -843,6 +855,8 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
       PJ_SSL_SOCK_PROTO_TLS1_2 | PJ_SSL_SOCK_PROTO_TLS1_3;
   transport_config.tls_setting.timeout.sec = 5;
   transport_config.tls_setting.timeout.msec = 0;
+  // UDP for Plivo Direct registration; TLS transport kept for authorized
+  // outbound sips: dials that still use the grant path.
   status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport_config,
                                   &engine->tls_transport_ids[0]);
   if (status != PJ_SUCCESS) {
@@ -853,6 +867,7 @@ pj_status_t initialize_library(TriplexPjsipEngine *engine) {
   if (status != PJ_SUCCESS) {
     return status;
   }
+  engine->tls_transport_id = engine->tls_transport_ids[0];
   return PJ_SUCCESS;
 }
 
@@ -896,16 +911,22 @@ pj_status_t add_account(TriplexPjsipEngine *engine) {
   account_config.ipv6_sip_use = PJSUA_IPV6_DISABLED;
   account_config.ipv6_media_use = PJSUA_IPV6_DISABLED;
   account_config.nat64_opt = PJSUA_NAT64_DISABLED;
-  account_config.use_srtp = engine->edge_udp_mode ? PJMEDIA_SRTP_DISABLED
-                                                 : PJMEDIA_SRTP_MANDATORY;
+  account_config.use_srtp = PJMEDIA_SRTP_OPTIONAL;
   account_config.srtp_secure_signaling = 0;
-  // Prefer rewritten Contact so the registrar can INVITE back through NAT.
-  // RFC5626 ;ob is Plivo-oriented; UDP edge registrars use plain keepalive.
+  // Advertise the public mapping so Plivo's Dial-to-Contact path can reach
+  // this UA. Keepalives refresh the NAT binding Plivo will INVITE into.
   account_config.allow_contact_rewrite = PJ_TRUE;
   account_config.contact_rewrite_method = PJSUA_CONTACT_REWRITE_ALWAYS_UPDATE;
   account_config.contact_use_src_port = PJ_TRUE;
-  account_config.use_rfc5626 = engine->edge_udp_mode ? PJ_FALSE : PJ_TRUE;
-  account_config.ka_interval = 15;
+  account_config.allow_via_rewrite = PJ_TRUE;
+  account_config.use_rfc5626 = PJ_TRUE;
+  account_config.rfc5626_instance_id =
+      pj_str(const_cast<char *>("<urn:uuid:triplex-plivo-direct-001>"));
+  account_config.rfc5626_reg_id = pj_str(const_cast<char *>("1"));
+  account_config.ka_interval = 10;
+  if (engine->tls_transport_id != PJSUA_INVALID_ID) {
+    account_config.transport_id = engine->tls_transport_id;
+  }
   account_config.cred_count = 1;
   account_config.cred_info[0].realm = pj_str(engine->realm.data());
   account_config.cred_info[0].scheme = pj_str(const_cast<char *>("digest"));
@@ -1388,8 +1409,17 @@ extern "C" bool triplex_pjsip_metrics_snapshot(TriplexPjsipEngine *engine,
   pjmedia_transport_info_init(&transport_info);
   if (pjsua_call_get_med_transport_info(call_id, media_index,
                                         &transport_info) == PJ_SUCCESS) {
-    pj_sockaddr_print(&transport_info.src_rtp_name, output->source_rtp_address,
-                      sizeof(output->source_rtp_address), 3);
+    // Half-up media (e.g. Plivo Media Timeout) can leave src_rtp_name with
+    // sa_family=0; pj_sockaddr_print asserts on that.
+    const unsigned short family =
+        transport_info.src_rtp_name.addr.sa_family;
+    if (family == PJ_AF_INET || family == PJ_AF_INET6) {
+      pj_sockaddr_print(&transport_info.src_rtp_name,
+                        output->source_rtp_address,
+                        sizeof(output->source_rtp_address), 3);
+    } else {
+      output->source_rtp_address[0] = '\0';
+    }
     for (unsigned index = 0; index < transport_info.specific_info_cnt;
          ++index) {
       const pjmedia_transport_specific_info &specific =

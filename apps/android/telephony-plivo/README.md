@@ -26,23 +26,22 @@ the same port.
 
 ## Security defaults
 
-- TLS 1.2/1.3 only, server certificate verification on, caller-provided CA
-  bundle required;
-- IPv4 and IPv6 TLS transports, NAT64 enabled, wildcard local binding;
-- registration uses `sips:...;transport=tls` and the account is not allowed to
-  downgrade to UDP/TCP;
-- SRTP is mandatory and requires a TLS signaling hop;
-- outbound calls accept only a non-expired gateway grant containing a `sips:`
-  URI;
+- Plivo Direct only: domain must be `phone.plivo.com` (no host SIP edge /
+  Kamailio registrar path).
+- Registration uses UDP to `sip:phone.plivo.com:5060` with Contact rewrite +
+  short keepalives. Plivo Endpoint Dial targets the Contact host:port rather
+  than reusing a TLS registration flow, so NATed TLS Contacts fail with
+  Network Error; UDP Direct keeps a reachable mapping without a proxy.
+- SRTP is optional on Direct inbound (negotiate when offered); authorized
+  outbound grants still use `sips:` + TLS transport when present.
+- TLS 1.2/1.3 transport remains available for grant-based outbound dials
+  (server certificate verification on, caller-provided CA bundle required).
 - registration credentials are not persisted by this module. JNI copies them
   into bounded native storage and the Kotlin password byte array is zeroed.
 
 Plivo's endpoint documentation defines the credentials and
-`sip:user@phone.plivo.com` form, and its firewall page lists TCP 5061. It does
-not, by itself, establish that every SIP Endpoint account negotiates TLS plus
-SRTP. The spike therefore fails closed. A real endpoint must pass TLS
-certificate/protocol evidence and mandatory-SRTP call setup before this route
-can be selected; do not weaken these settings to obtain a green demo.
+`sip:user@phone.plivo.com` form. Inbound reachability is proven by REGISTER
+200 + Dial/Call to that AOR with billable media — not by a host edge.
 
 ## Lifecycle and signaling
 

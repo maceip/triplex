@@ -189,15 +189,17 @@ data class DirectTransportMetrics(
         get() = NegotiatedTlsVersion.fromPjSslProtocol(tlsProtocol)
 
     /**
-     * Public Triplex SIP edges register over UDP without TLS/SRTP (Plivo Dial
-     * bridges PSTN as plain RTP). Plivo Direct endpoints still require the
-     * full TLS+SRTP evidence path.
+     * Plivo Direct Endpoint inbound Dial targets the Contact mapping rather
+     * than the TLS registration flow, so the UA registers over UDP and stays
+     * reachable without a host SIP edge. Signaling is "ready" once REGISTER
+     * returns 200; media security is still evidenced separately via SRTP when
+     * negotiated.
      */
-    val edgePlainTransport: Boolean
+    val plivoDirectUdpReady: Boolean
         get() = registered && registrationStatus == 200 && !tlsConnected
 
     val secureSignalingReady: Boolean
-        get() = if (edgePlainTransport) {
+        get() = if (plivoDirectUdpReady) {
             true
         } else {
             DirectTransportSecurityPolicy.evaluate(
@@ -207,7 +209,7 @@ data class DirectTransportMetrics(
         }
 
     val secureMediaReady: Boolean
-        get() = if (edgePlainTransport) {
+        get() = if (plivoDirectUdpReady) {
             mediaActive
         } else {
             DirectTransportSecurityPolicy.evaluate(

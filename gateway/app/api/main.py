@@ -276,6 +276,146 @@ async def auth_login_finish(
     return await login_finish(request, data, db)
 
 
+@app.get("/api/auth/user/{email}")
+async def get_user_by_email(
+    email: str,
+    db: AsyncSession = Depends(get_db),
+):
+    from ..db.models import UserAccountDB, PasskeyCredentialDB
+    result = await db.execute(
+        select(UserAccountDB).where(UserAccountDB.email == email)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"error": "User not found"}
+    
+    creds_result = await db.execute(
+        select(PasskeyCredentialDB).where(PasskeyCredentialDB.user_id == user.id)
+    )
+    credentials = creds_result.scalars().all()
+    
+    return {
+        "email": user.email,
+        "user_id": str(user.id),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "passkey_count": len(credentials),
+        "passkeys": [
+            {
+                "id": str(cred.id),
+                "created_at": cred.created_at.isoformat() if cred.created_at else None,
+                "last_used_at": cred.last_used_at.isoformat() if cred.last_used_at else None,
+                "device_type": cred.device_type,
+            }
+            for cred in credentials
+        ]
+    }
+
+
+@app.get("/api/logs")
+async def get_logs(
+    q: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    from ..db.models import AuditLogDB, ScreeningSessionDB, TaskDefinitionDB, DeviceRegistrationDB, UserAccountDB
+    from sqlalchemy import or_, desc
+    
+    logs = []
+    
+    audit_result = await db.execute(
+        select(AuditLogDB)
+        .order_by(desc(AuditLogDB.created_at))
+        .limit(limit)
+    )
+    for log in audit_result.scalars().all():
+        logs.append({
+            "type": "audit",
+            "id": str(log.id),
+            "user_id": str(log.user_id) if log.user_id else None,
+            "event_type": log.event_type,
+            "event_data": log.event_data,
+            "placement": log.placement,
+            "latency_ms": log.latency_ms,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        })
+    
+    screening_result = await db.execute(
+        select(ScreeningSessionDB)
+        .order_by(desc(ScreeningSessionDB.created_at))
+        .limit(limit)
+    )
+    for s in screening_result.scalars().all():
+        logs.append({
+            "type": "screening",
+            "id": s.call_uuid,
+            "user_id": str(s.user_id),
+            "caller_number": s.caller_number,
+            "called_number": s.called_number,
+            "status": s.status,
+            "decision": s.decision,
+            "transcript": s.transcript,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+    
+    task_result = await db.execute(
+        select(TaskDefinitionDB)
+        .order_by(desc(TaskDefinitionDB.created_at))
+        .limit(limit)
+    )
+    for t in task_result.scalars().all():
+        logs.append({
+            "type": "task",
+            "id": str(t.id),
+            "user_id": str(t.user_id),
+            "task_type": t.task_type,
+            "destination_number": t.destination_number,
+            "status": t.status,
+            "outcome": t.outcome,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        })
+    
+    logs.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    
+    if q:
+        q_lower = q.lower()
+        logs = [log for log in logs if 
+            q_lower in str(log).lower() or
+            any(q_lower in str(v).lower() for v in log.values() if v)]
+    
+    return {"logs": logs[:limit], "total": len(logs)}
+
+
+@app.get("/api/devices")
+async def get_devices(
+    db: AsyncSession = Depends(get_db),
+):
+    from ..db.models import DeviceRegistrationDB, UserAccountDB
+    from sqlalchemy import desc
+    
+    result = await db.execute(
+        select(DeviceRegistrationDB)
+        .order_by(desc(DeviceRegistrationDB.last_heartbeat))
+    )
+    devices = result.scalars().all()
+    
+    return {
+        "devices": [
+            {
+                "id": str(d.id),
+                "user_id": str(d.user_id),
+                "device_token": d.device_token[:20] + "..." if len(d.device_token) > 20 else d.device_token,
+                "sip_endpoint": d.sip_endpoint,
+                "ready": d.ready,
+                "media_ready": d.media_ready,
+                "last_heartbeat": d.last_heartbeat.isoformat() if d.last_heartbeat else None,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in devices
+        ]
+    }
+
+
 @app.get("/prompts/{prompt_name}.wav", include_in_schema=False)
 @limiter.exempt
 async def prompt_audio(

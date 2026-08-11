@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Triplex Dashboard</title>
+<style>
+* { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+body { margin: 0; background: #0a0a0a; color: #fff; }
+header { background: #1a1a1a; padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }
+.logo { font-size: 24px; font-weight: bold; }
+.user-info { color: #888; }
+.container { max-width: 1600px; margin: 24px auto; padding: 0 24px; }
+h1 { font-size: 28px; margin-bottom: 8px; }
+.subtitle { color: #888; margin-bottom: 24px; }
+.tabs { display: flex; gap: 12px; margin-bottom: 24px; }
+.tab { padding: 10px 20px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; cursor: pointer; }
+.tab.active { background: #007AFF; border-color: #007AFF; }
+.search-box { display: flex; gap: 12px; margin-bottom: 24px; }
+.search-box input { flex: 1; padding: 12px 16px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; }
+.search-box button { padding: 12px 24px; background: #007AFF; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+.card { background: #1a1a1a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.card h2 { margin: 0; font-size: 18px; }
+.refresh-btn { background: transparent; color: #007AFF; border: 1px solid #007AFF; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.log-list { max-height: 600px; overflow-y: auto; }
+.log-entry { padding: 12px; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
+.log-entry:hover { background: #2a2a2a; }
+.log-time { color: #888; font-size: 12px; margin-right: 12px; }
+.log-type { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 8px; }
+.log-type.audit { background: #4a3a00; color: #ffcc00; }
+.log-type.screening { background: #004a4a; color: #00ffcc; }
+.log-type.task { background: #4a004a; color: #ff00cc; }
+.log-type.device { background: #004a00; color: #00ff00; }
+.log-content { color: #ccc; margin-top: 4px; word-break: break-all; }
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.device-card { background: #2a2a2a; border-radius: 8px; padding: 16px; }
+.device-card h3 { margin: 0 0 8px 0; font-size: 14px; color: #007AFF; }
+.device-card p { margin: 4px 0; font-size: 12px; color: #888; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-dot.online { background: #00ff00; }
+.status-dot.offline { background: #ff0000; }
+.logout { background: transparent; color: #007AFF; border: 1px solid #007AFF; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+.logout:hover { background: #007AFF; color: #fff; }
+</style>
+</head>
+<body>
+<header>
+<div class="logo">Triplex Gateway</div>
+<div>
+<span class="user-info" id="user-email"></span>
+<button class="logout" onclick="logout()">Sign Out</button>
+</div>
+</header>
+
+<div class="container">
+<h1>Dashboard</h1>
+<p class="subtitle">Real-time logs and device monitoring</p>
+
+<div class="tabs">
+<div class="tab active" onclick="showTab('logs')" id="tab-logs">Logs</div>
+<div class="tab" onclick="showTab('devices')" id="tab-devices">Devices</div>
+</div>
+
+<div class="search-box" id="search-box">
+<input type="text" id="search-input" placeholder="Search logs..." onkeypress="if(event.key==='Enter')searchLogs()">
+<button onclick="searchLogs()">Search</button>
+</div>
+
+<div id="logs-view">
+<div class="card">
+<div class="card-header">
+<h2>All Logs</h2>
+<button class="refresh-btn" onclick="loadLogs()">Refresh</button>
+</div>
+<div class="log-list" id="log-list">
+<div style="color: #888; padding: 20px;">Loading...</div>
+</div>
+</div>
+</div>
+
+<div id="devices-view" style="display:none;">
+<div class="card">
+<div class="card-header">
+<h2>Connected Devices</h2>
+<button class="refresh-btn" onclick="loadDevices()">Refresh</button>
+</div>
+<div class="device-grid" id="device-list">
+<div style="color: #888; padding: 20px;">Loading...</div>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+const urlParams = new URLSearchParams(window.location.search);
+const userEmail = urlParams.get('user') || 'User';
+
+document.getElementById('user-email').textContent = userEmail;
+
+let currentSearch = '';
+
+function showTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    document.getElementById('logs-view').style.display = tab === 'logs' ? 'block' : 'none';
+    document.getElementById('devices-view').style.display = tab === 'devices' ? 'block' : 'none';
+    document.getElementById('search-box').style.display = tab === 'logs' ? 'flex' : 'none';
+    if (tab === 'logs') loadLogs();
+    if (tab === 'devices') loadDevices();
+}
+
+function searchLogs() {
+    currentSearch = document.getElementById('search-input').value;
+    loadLogs();
+}
+
+async function loadLogs() {
+    const list = document.getElementById('log-list');
+    list.innerHTML = '<div style="color: #888; padding: 20px;">Loading...</div>';
+    
+    try {
+        const url = currentSearch ? `${API_BASE}/api/logs?q=${encodeURIComponent(currentSearch)}` : `${API_BASE}/api/logs`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        
+        if (!data.logs || data.logs.length === 0) {
+            list.innerHTML = '<div style="color: #888; padding: 20px;">No logs found</div>';
+            return;
+        }
+        
+        list.innerHTML = data.logs.map(log => {
+            const time = new Date(log.created_at).toLocaleString();
+            const typeClass = log.type || 'audit';
+            const typeLabel = log.type || 'audit';
+            
+            let content = '';
+            if (log.type === 'audit') {
+                content = `${log.event_type} ${log.event_data ? JSON.stringify(log.event_data) : ''}`;
+            } else if (log.type === 'screening') {
+                content = `${log.caller_number} → ${log.called_number} | Status: ${log.status} | Decision: ${log.decision || 'pending'}`;
+                if (log.transcript) content += `<br><span style="color:#888">${log.transcript}</span>`;
+            } else if (log.type === 'task') {
+                content = `${log.task_type} → ${log.destination_number} | Status: ${log.status}`;
+                if (log.outcome) content += ` | Outcome: ${log.outcome}`;
+            }
+            
+            return `<div class="log-entry">
+                <span class="log-time">${time}</span>
+                <span class="log-type ${typeClass}">${typeLabel}</span>
+                <div class="log-content">${content}</div>
+            </div>`;
+        }).join('');
+        
+    } catch (err) {
+        list.innerHTML = `<div style="color: #ff6666; padding: 20px;">Error: ${err.message}</div>`;
+        console.error(err);
+    }
+}
+
+async function loadDevices() {
+    const list = document.getElementById('device-list');
+    list.innerHTML = '<div style="color: #888; padding: 20px;">Loading...</div>';
+    
+    try {
+        const resp = await fetch(`${API_BASE}/api/devices`);
+        const data = await resp.json();
+        
+        if (!data.devices || data.devices.length === 0) {
+            list.innerHTML = '<div style="color: #888; padding: 20px;">No devices registered</div>';
+            return;
+        }
+        
+        list.innerHTML = data.devices.map(d => {
+            const lastSeen = new Date(d.last_heartbeat);
+            const now = new Date();
+            const isOnline = (now - lastSeen) < 300000;
+            const lastSeenStr = lastSeen.toLocaleString();
+            
+            return `<div class="device-card">
+                <h3>${d.sip_endpoint || 'Unknown endpoint'}</h3>
+                <p><span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>${isOnline ? 'Online' : 'Offline'}</p>
+                <p>Token: ${d.device_token}</p>
+                <p>Ready: ${d.ready ? 'Yes' : 'No'} | Media: ${d.media_ready ? 'Yes' : 'No'}</p>
+                <p>Last seen: ${lastSeenStr}</p>
+            </div>`;
+        }).join('');
+        
+    } catch (err) {
+        list.innerHTML = `<div style="color: #ff6666; padding: 20px;">Error: ${err.message}</div>`;
+        console.error(err);
+    }
+}
+
+function logout() {
+    window.location.href = '/static/enroll.html';
+}
+
+loadLogs();
+</script>
+</body>
+</html>

@@ -18,8 +18,15 @@ class DebugSipProvisioningReceiver : BroadcastReceiver() {
         val password = intent.getStringExtra(EXTRA_PASSWORD).orEmpty()
         val domain = intent.getStringExtra(EXTRA_DOMAIN).orEmpty()
             .ifBlank { "phone.plivo.com" }
-        if (username.isBlank() || password.length < 5 || domain.isBlank()) {
+        if (username.isBlank() || password.length < 5) {
             Timber.e("Rejected incomplete debug SIP provisioning")
+            return
+        }
+        if (domain != "phone.plivo.com") {
+            Timber.e(
+                "Rejected non-Plivo SIP domain %s (Direct Endpoint only)",
+                domain,
+            )
             return
         }
         secureStorage.setPlivoUsername(username)

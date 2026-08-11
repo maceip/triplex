@@ -1,4 +1,4 @@
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64encode, urlsafe_b64decode
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -207,12 +207,13 @@ async def login_start(
     if not credentials:
         raise HTTPException(status_code=404, detail="No passkey registered")
 
-    allow_credentials = [
-        PublicKeyCredentialDescriptor(
-            id=urlsafe_b64encode(cred.credential_id.encode()).decode('utf-8').rstrip('=').encode()
+    allow_credentials = []
+    for cred in credentials:
+        # Credential ID is stored as base64url string, decode it to bytes
+        cred_bytes = urlsafe_b64decode(cred.credential_id + '==')
+        allow_credentials.append(
+            PublicKeyCredentialDescriptor(id=cred_bytes)
         )
-        for cred in credentials
-    ]
 
     options = generate_authentication_options(
         rp_id=_get_rp_id(),

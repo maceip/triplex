@@ -226,6 +226,9 @@ async function startLogin() {
         }
 
         showStatus("login-status", "✅ Authentication successful!", "success");
+        setTimeout(() => {
+            window.location.href = "https://grafana-tx-production-hffmghevcvbrd2cw.wus2.grafana.azure.com";
+        }, 500);
     } catch (error) {
         console.error("Login error:", error);
         showStatus("login-status", "Error: " + error.message, "error");
