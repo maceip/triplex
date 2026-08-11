@@ -44,6 +44,10 @@ class GatewaySettings(BaseSettings):
     database_backoff_max_seconds: float = Field(gt=0, le=120)
     database_pool_recycle_seconds: int = Field(ge=30, le=3600)
 
+    enrollment_enabled: bool = Field(default=True)
+    webauthn_rp_id: str | None = None
+    webauthn_origin: str | None = None
+
     @field_validator("plivo_sip_domain")
     @classmethod
     def validate_sip_domain(cls, value: str) -> str:

@@ -44,6 +44,9 @@ import zed.rainxch.rikkaui.components.ui.button.IconButton
 import zed.rainxch.rikkaui.components.ui.button.IconButtonSize
 import zed.rainxch.rikkaui.components.ui.glass.GlassCard
 import zed.rainxch.rikkaui.components.ui.glass.GlassContainer
+import zed.rainxch.rikkaui.components.ui.glass.GlassScenery
+import zed.rainxch.rikkaui.foundation.RikkaScenery
+import zed.rainxch.rikkaui.foundation.RikkaSceneryLobe
 import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
@@ -93,46 +96,40 @@ fun TriplexBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val colors = TriplexDesign.colors
-    val background = RikkaTheme.colors.background
     GlassContainer(
         modifier = modifier.fillMaxSize(),
-        background = {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to colors.surfaceRaised,
-                            0.52f to background,
-                            1f to colors.surfaceSunken
-                        )
-                    )
-                    .drawBehind {
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(colors.auraPrimary, Color.Transparent),
-                                center = Offset(size.width * 0.92f, size.height * 0.06f),
-                                radius = size.width * 0.7f
-                            ),
-                            radius = size.width * 0.7f,
-                            center = Offset(size.width * 0.92f, size.height * 0.06f)
-                        )
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(colors.auraSecondary, Color.Transparent),
-                                center = Offset(size.width * 0.08f, size.height * 0.78f),
-                                radius = size.width * 0.62f
-                            ),
-                            radius = size.width * 0.62f,
-                            center = Offset(size.width * 0.08f, size.height * 0.78f)
-                        )
-                    }
-            )
-        }
+        background = { GlassScenery(scenery = triplexScenery()) }
     ) {
         content()
     }
+}
+
+/**
+ * Triplex's brand scene, built to be refracted.
+ *
+ * The previous background was a near-black vertical gradient plus two radial
+ * auras at 18% and 14% alpha. That is a flat field: blurring a smooth gradient
+ * returns the same gradient, and displacing a sample by the 26-44dp the lens
+ * uses lands on the colour that was already there. Every optical cue the glass
+ * material pays for was invisible, which is why it read as a translucent panel.
+ *
+ * Same violet-and-cyan identity, rebuilt so the colour actually changes across
+ * the distance the lens displaces by.
+ */
+@Composable
+private fun triplexScenery(): RikkaScenery {
+    val colors = TriplexDesign.colors
+    return RikkaScenery(
+        top = colors.surfaceRaised,
+        bottom = colors.surfaceSunken,
+        lobes = listOf(
+            RikkaSceneryLobe(Color(0xFF6D5BFF), centerX = 0.92f, centerY = 0.04f, radius = 0.68f, alpha = 0.58f),
+            RikkaSceneryLobe(Color(0xFF00A8B8), centerX = 0.06f, centerY = 0.40f, radius = 0.60f, alpha = 0.44f),
+            RikkaSceneryLobe(Color(0xFF8B80FF), centerX = 0.20f, centerY = 0.78f, radius = 0.32f, alpha = 0.46f),
+            RikkaSceneryLobe(Color(0xFF55D9E7), centerX = 0.80f, centerY = 0.62f, radius = 0.26f, alpha = 0.38f),
+            RikkaSceneryLobe(Color(0xFF4C6BFF), centerX = 0.58f, centerY = 0.26f, radius = 0.20f, alpha = 0.32f)
+        )
+    )
 }
 
 /** Standard staged screen entrance; navigation owns the matching exit. */

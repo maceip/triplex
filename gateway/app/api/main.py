@@ -43,6 +43,18 @@ from ..models.schemas import (
     UserAccount,
 )
 from ..services import AuditService, AuthService, RoutingService, TaskService
+from .webauthn import (
+    RegistrationStartRequest,
+    RegistrationStartResponse,
+    RegistrationFinishRequest,
+    LoginStartRequest,
+    LoginStartResponse,
+    LoginFinishRequest,
+    registration_start,
+    registration_finish,
+    login_start,
+    login_finish,
+)
 from ..services.plivo_signature import verify_v3
 from ..services.route_grants import (
     OutboundRouteService,
@@ -204,6 +216,42 @@ async def get_telemetry_key(
 ):
     """Return API key for telemetry after authentication."""
     return {"api_key": "Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw="}
+
+
+@app.post("/api/auth/register/start")
+async def auth_register_start(
+    request: Request,
+    data: RegistrationStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await registration_start(request, data, db)
+
+
+@app.post("/api/auth/register/finish")
+async def auth_register_finish(
+    request: Request,
+    data: RegistrationFinishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await registration_finish(request, data, db)
+
+
+@app.post("/api/auth/login/start")
+async def auth_login_start(
+    request: Request,
+    data: LoginStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await login_start(request, data, db)
+
+
+@app.post("/api/auth/login/finish")
+async def auth_login_finish(
+    request: Request,
+    data: LoginFinishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await login_finish(request, data, db)
 
 
 @app.get("/prompts/{prompt_name}.wav", include_in_schema=False)

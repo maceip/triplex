@@ -16,6 +16,7 @@ dependencies = [
     "PyJWT>=2.9.0,<3.0.0",
     "slowapi>=0.1.9,<1.0.0",
     "tenacity>=9.0.0,<10.0.0",
+    "webauthn>=2.0.0,<3.0.0",
 ]
 
 [build-system]
