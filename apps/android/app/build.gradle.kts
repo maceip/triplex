@@ -35,6 +35,19 @@ android {
 
         buildConfigField("String", "GATEWAY_URL", "\"${localProperties.getProperty("gateway.url", "http://10.0.2.2:8000")}\"")
         buildConfigField("String", "AGENT_TRANSFER_NUMBER", "\"${localProperties.getProperty("plivo.agent.transfer.number", "")}\"")
+        buildConfigField(
+            "String",
+            "TELEMETRY_API_KEY",
+            "\"${localProperties.getProperty("telemetry.api.key", "")}\"",
+        )
+        buildConfigField(
+            "String",
+            "TELEMETRY_INGEST_URL",
+            "\"${localProperties.getProperty(
+                "telemetry.ingest.url",
+                "https://func-triplex-ingest-production.azurewebsites.net",
+            )}\"",
+        )
     }
 
     buildTypes {

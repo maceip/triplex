@@ -21,21 +21,26 @@ class TriplexApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         
-        val telemetryConfig = TelemetryConfig(
-            ingestUrl = "https://func-triplex-ingest-production.azurewebsites.net",
-            apiKey = "Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw=",
-            batchSize = 50,
-            flushIntervalMs = 30_000L
-        )
-        
-        try {
-            val telemetryClient = TelemetryClient.initialize(this, telemetryConfig)
-            Timber.plant(TelemetryTree(telemetryClient))
-            Timber.i("Telemetry client initialized")
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to initialize telemetry client")
+        val telemetryKey = BuildConfig.TELEMETRY_API_KEY
+        if (telemetryKey.isNotBlank()) {
+            val telemetryConfig = TelemetryConfig(
+                ingestUrl = BuildConfig.TELEMETRY_INGEST_URL,
+                apiKey = telemetryKey,
+                batchSize = 50,
+                flushIntervalMs = 30_000L,
+                enableGooglePlayVerification = true,
+            )
+            try {
+                val telemetryClient = TelemetryClient.initialize(this, telemetryConfig)
+                Timber.plant(TelemetryTree(telemetryClient))
+                Timber.i("Telemetry client initialized")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to initialize telemetry client")
+            }
+        } else {
+            Timber.w("TELEMETRY_API_KEY not set in local.properties — telemetry disabled")
         }
-        
+
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }

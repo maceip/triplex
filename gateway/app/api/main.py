@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -237,7 +238,13 @@ async def get_telemetry_key(
     user_id: UUID = Depends(get_current_user_id),
 ):
     """Return API key for telemetry after authentication."""
-    return {"api_key": "Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw="}
+    api_key = os.environ.get("TELEMETRY_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Telemetry API key is not configured on this gateway",
+        )
+    return {"api_key": api_key}
 
 
 @app.post("/api/auth/register/start")
@@ -797,20 +804,25 @@ logger.setLevel(logging.INFO)
 
 # Initialize telemetry client for Azure Log Analytics
 try:
-    import sys
-    sys.path.insert(0, '/Users/mac/triplex-analytics/python/triplex-telemetry/src')
     from triplex_telemetry import TelemetryClient, TelemetryConfig, setup_logging
-    
+
+    telemetry_api_key = os.environ.get("TELEMETRY_API_KEY", "").strip()
+    if not telemetry_api_key:
+        raise RuntimeError("TELEMETRY_API_KEY is not set")
+
     telemetry_config = TelemetryConfig(
-        ingest_url="https://func-triplex-ingest-production.azurewebsites.net",
-        api_key="Gnlw4HbXdmEHbj12db1BDEOUgBh4s9T3+J3Y+L9Z1Tw=",
-        source="gateway"
+        ingest_url=os.environ.get(
+            "TELEMETRY_INGEST_URL",
+            "https://func-triplex-ingest-production.azurewebsites.net",
+        ),
+        api_key=telemetry_api_key,
+        source="gateway",
     )
     telemetry_client = TelemetryClient.initialize(telemetry_config)
     setup_logging(telemetry_client, level=logging.INFO)
     logger.info("Telemetry client initialized successfully")
 except Exception as e:
-    logger.warning(f"Failed to initialize telemetry client: {e}")
+    logger.warning("Failed to initialize telemetry client: %s", e)
 
 
 

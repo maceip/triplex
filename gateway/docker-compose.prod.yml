@@ -31,6 +31,8 @@ services:
       - DATABASE_BACKOFF_MIN_SECONDS=${DATABASE_BACKOFF_MIN_SECONDS:?required}
       - DATABASE_BACKOFF_MAX_SECONDS=${DATABASE_BACKOFF_MAX_SECONDS:?required}
       - DATABASE_POOL_RECYCLE_SECONDS=${DATABASE_POOL_RECYCLE_SECONDS:?required}
+      - TELEMETRY_API_KEY=${TELEMETRY_API_KEY:-}
+      - TELEMETRY_INGEST_URL=${TELEMETRY_INGEST_URL:-https://func-triplex-ingest-production.azurewebsites.net}
     depends_on:
       db:
         condition: service_healthy
