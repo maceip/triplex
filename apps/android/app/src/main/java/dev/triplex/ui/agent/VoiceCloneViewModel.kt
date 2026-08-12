@@ -3,6 +3,9 @@ package dev.triplex.ui.agent
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Application
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,15 +15,19 @@ import dev.triplex.data.repository.Result
 import dev.triplex.voice.ReferenceAudio
 import dev.triplex.voice.VoiceCloneRepository
 import dev.triplex.voice.VoiceRecorder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.max
 import kotlin.math.sqrt
 
 /** The sentence the user reads aloud: consent record and clone reference. */
@@ -100,13 +107,11 @@ class VoiceCloneViewModel @Inject constructor(
     private var recordJob: Job? = null
     private var meterJob: Job? = null
     private var modelsJob: Job? = null
+    private var previewJob: Job? = null
     @Volatile private var discardCurrentCapture = false
 
     private val referenceFile: File
         get() = File(getApplication<Application>().filesDir, "voice_reference.wav")
-
-    private val previewFile: File
-        get() = File(getApplication<Application>().cacheDir, "voice_preview.wav")
 
     private val pendingReferenceFile: File
         get() = File(getApplication<Application>().cacheDir, "voice_reference_pending.wav")
@@ -329,26 +334,97 @@ class VoiceCloneViewModel @Inject constructor(
     }
 
     fun speakPreview() {
-        viewModelScope.launch {
+        previewJob?.cancel()
+        repository.cancelPreview()
+        previewJob = viewModelScope.launch {
+            val text = _state.value.previewText.trim()
+            if (text.isEmpty()) {
+                _state.value = _state.value.copy(error = "Enter something to speak first")
+                return@launch
+            }
             _state.value = _state.value.copy(
                 stage = VoiceCloneStage.SYNTHESIZING,
                 error = null,
-                message = null
+                message = null,
             )
-            when (val result = repository.preview(_state.value.previewText, previewFile)) {
-                is Result.Success -> {
-                    _state.value = _state.value.copy(stage = VoiceCloneStage.PLAYING)
-                    recorder.play(result.data)
-                    _state.value = _state.value.copy(
-                        stage = VoiceCloneStage.READY,
-                        message = "Played in your cloned voice"
-                    )
-                }
-                is Result.Error -> _state.value = _state.value.copy(
+            try {
+                streamPreview(text)
+                _state.value = _state.value.copy(
                     stage = VoiceCloneStage.READY,
-                    error = result.message
+                    message = "Played in your cloned voice",
+                )
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(stage = restingStage())
+                throw e
+            } catch (error: Exception) {
+                Timber.e(error, "Streaming voice preview failed")
+                _state.value = _state.value.copy(
+                    stage = VoiceCloneStage.READY,
+                    error = error.message ?: "Preview failed",
                 )
             }
+        }
+    }
+
+    /**
+     * Plays cloned PCM as Qwen emits it — same streaming pattern as call speak,
+     * so the first audible chunk is not blocked on the full utterance.
+     */
+    private suspend fun streamPreview(text: String) = withContext(Dispatchers.IO) {
+        val minBuffer = AudioTrack.getMinBufferSize(
+            PREVIEW_SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        check(minBuffer > 0) { "AudioTrack unavailable" }
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(PREVIEW_SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setBufferSizeInBytes(max(minBuffer, PREVIEW_SAMPLE_RATE / 5) * 2)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        var heard = false
+        var totalSamples = 0
+        try {
+            track.play()
+            repository.previewStream(text).collect { chunk ->
+                if (chunk.isEmpty()) return@collect
+                if (!heard) {
+                    heard = true
+                    withContext(Dispatchers.Main.immediate) {
+                        _state.value = _state.value.copy(stage = VoiceCloneStage.PLAYING)
+                    }
+                }
+                var offset = 0
+                while (offset < chunk.size) {
+                    val written = track.write(chunk, offset, chunk.size - offset)
+                    check(written >= 0) { "AudioTrack write failed ($written)" }
+                    offset += written
+                }
+                totalSamples += chunk.size
+            }
+            check(heard && totalSamples > 0) { "Preview produced no audio" }
+            // Writes already paced most of playback; wait only for what is left.
+            val head = track.playbackHeadPosition.coerceAtLeast(0)
+            val remainingSamples = (totalSamples - head).coerceAtLeast(0)
+            val remainingMs = (remainingSamples * 1_000L) / PREVIEW_SAMPLE_RATE
+            delay(remainingMs.coerceIn(0L, 2_000L))
+        } finally {
+            runCatching { track.pause() }
+            runCatching { track.flush() }
+            runCatching { track.stop() }
+            track.release()
         }
     }
 
@@ -366,11 +442,12 @@ class VoiceCloneViewModel @Inject constructor(
     }
 
     fun revoke() {
+        previewJob?.cancel()
+        repository.cancelPreview()
         viewModelScope.launch {
             when (val result = repository.revoke()) {
                 is Result.Success -> {
                     referenceFile.delete()
-                    previewFile.delete()
                     pendingReferenceFile.delete()
                     _state.value = VoiceCloneState(
                         message = "Voice profile revoked",
@@ -385,6 +462,8 @@ class VoiceCloneViewModel @Inject constructor(
     override fun onCleared() {
         discardCurrentCapture = true
         recorder.stop()
+        previewJob?.cancel()
+        repository.cancelPreview()
         meterJob?.cancel()
         modelsJob?.cancel()
         pendingReferenceFile.delete()
@@ -393,5 +472,6 @@ class VoiceCloneViewModel @Inject constructor(
 
     private companion object {
         const val METER_INTERVAL_MILLIS = 33L
+        const val PREVIEW_SAMPLE_RATE = 16_000
     }
 }

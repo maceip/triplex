@@ -3,6 +3,7 @@ package dev.triplex.voice
 import dev.triplex.data.remote.VoiceProfileStatus
 import dev.triplex.data.repository.Result
 import dev.triplex.speech.tts.Qwen3CallVoice
+import kotlinx.coroutines.flow.Flow
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
@@ -111,7 +112,25 @@ class VoiceCloneRepository @Inject constructor(
         }
     }
 
-    /** Synthesizes [text] in the cloned voice and writes a WAV to [target]. */
+    /**
+     * Streams cloned-voice PCM (16 kHz mono) as it is synthesized — same path
+     * as live call speak. Collectors hear the first chunk without waiting for
+     * the full utterance.
+     */
+    fun previewStream(text: String): Flow<ShortArray> {
+        check(promptStore.readXVector() != null) { "No prepared voice profile" }
+        return qwenVoice.synthesizeStream(text)
+    }
+
+    /** Cooperative cancel of an in-flight [previewStream] / call synthesis. */
+    fun cancelPreview() {
+        qwenVoice.cancel()
+    }
+
+    /**
+     * Synthesizes [text] fully and writes a WAV to [target]. Used for enrollment
+     * verify; interactive preview should use [previewStream] instead.
+     */
     suspend fun preview(text: String, target: File): Result<File> {
         if (promptStore.readXVector() == null) {
             return Result.Error("No prepared voice profile")

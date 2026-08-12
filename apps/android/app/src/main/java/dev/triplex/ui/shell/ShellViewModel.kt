@@ -18,6 +18,8 @@ import javax.inject.Inject
 @HiltViewModel
 class ShellViewModel @Inject constructor(
     repository: CallSessionRepository,
+    private val debugNavigationBus: dev.triplex.debug.DebugNavigationBus,
 ) : ViewModel() {
     val session: StateFlow<CallSession?> = repository.session
+    val debugNavigationRequests = debugNavigationBus.requests
 }

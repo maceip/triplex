@@ -188,6 +188,24 @@ private fun ShellScaffold(
     val agentDestination =
         if (selectedTabIndex != KeypadTabIndex) agentEntry.value?.destination else null
 
+    val shellViewModel = hiltViewModel<ShellViewModel>()
+    LaunchedEffect(Unit) {
+        shellViewModel.debugNavigationRequests.collect { route ->
+            when (route) {
+                dev.triplex.debug.DebugNavigationBus.ROUTE_AGENT_VOICE -> {
+                    selectedTabIndex = AgentTabIndex
+                    agentNavController.navigate(ShellRoute.AgentVoice) {
+                        launchSingleTop = true
+                    }
+                }
+                dev.triplex.debug.DebugNavigationBus.ROUTE_AGENT_HOME -> {
+                    selectedTabIndex = AgentTabIndex
+                    agentNavController.popBackStack(ShellRoute.AgentHome, inclusive = false)
+                }
+            }
+        }
+    }
+
     // A call must not be hidden behind a tab the user happens to be on.
     LaunchedEffect(callSurfaceActive) {
         if (callSurfaceActive) selectedTabIndex = KeypadTabIndex
@@ -370,6 +388,7 @@ private const val BackScaleDrop = 0.02f
 private const val BackAlphaDrop = 0.08f
 
 private const val KeypadTabIndex = 0
+private const val AgentTabIndex = 1
 
 /**
  * The Agent destinations that are pushes rather than tabs.

@@ -44,6 +44,7 @@ class DevelopmentControlService : Service() {
     @Inject lateinit var telephonyController: TelephonyController
     @Inject lateinit var voiceCloneRepository: VoiceCloneRepository
     @Inject lateinit var agentConfigRepository: AgentConfigRepository
+    @Inject lateinit var debugNavigationBus: DebugNavigationBus
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -60,6 +61,7 @@ class DevelopmentControlService : Service() {
                     ACTION_OUTBOUND_SMOKE -> outboundSmoke(intent!!)
                     ACTION_VOICE_CLONE_SMOKE -> voiceCloneSmoke(intent)
                     ACTION_FETCH_QWEN3_MODELS -> fetchQwen3Models()
+                    ACTION_OPEN_VOICE -> openVoiceScreen()
                     ACTION_SET_CLONED_POLICY -> setClonedPolicy()
                     ACTION_HANGUP -> {
                         telephonyController.hangup()
@@ -183,6 +185,15 @@ class DevelopmentControlService : Service() {
         Log.i(TAG, "TRIPLEX_DEV_FETCH_QWEN3 PASS fetch_ms=$fetchMs")
     }
 
+    private fun openVoiceScreen() {
+        val launch = Intent(this, Class.forName("dev.triplex.dialer.DialerActivity")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        startActivity(launch)
+        debugNavigationBus.open(DebugNavigationBus.ROUTE_AGENT_VOICE)
+        Log.i(TAG, "TRIPLEX_DEV_OPEN_VOICE PASS route=${DebugNavigationBus.ROUTE_AGENT_VOICE}")
+    }
+
     private suspend fun setClonedPolicy() {
         when (val result = agentConfigRepository.setInboundVoicePolicy(AutomationVoicePolicy.CLONED)) {
             is Result.Success -> {
@@ -221,6 +232,7 @@ class DevelopmentControlService : Service() {
         const val ACTION_OUTBOUND_SMOKE = "dev.triplex.debug.OUTBOUND_SMOKE"
         const val ACTION_VOICE_CLONE_SMOKE = "dev.triplex.debug.VOICE_CLONE_SMOKE"
         const val ACTION_FETCH_QWEN3_MODELS = "dev.triplex.debug.FETCH_QWEN3_MODELS"
+        const val ACTION_OPEN_VOICE = "dev.triplex.debug.OPEN_VOICE"
         const val ACTION_SET_CLONED_POLICY = "dev.triplex.debug.SET_CLONED_POLICY"
         const val ACTION_HANGUP = "dev.triplex.debug.HANGUP"
         const val EXTRA_DEVICE_TOKEN = "device_token"

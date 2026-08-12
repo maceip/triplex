@@ -958,8 +958,8 @@ private fun VoiceReadyExperience(
                 state = orbState,
                 size = if (compact) 172.dp else 208.dp,
                 label = when (state.stage) {
-                    VoiceCloneStage.SYNTHESIZING -> "Creating a cloned voice preview"
-                    VoiceCloneStage.PLAYING -> "Playing cloned voice preview"
+                    VoiceCloneStage.SYNTHESIZING -> "Starting cloned voice stream"
+                    VoiceCloneStage.PLAYING -> "Streaming cloned voice"
                     else -> "Voice profile ready"
                 }
             )
@@ -978,8 +978,8 @@ private fun VoiceReadyExperience(
                 ) {
                     TriplexStatusPill(
                         text = when (stage) {
-                            VoiceCloneStage.SYNTHESIZING -> "CREATING PREVIEW"
-                            VoiceCloneStage.PLAYING -> "PLAYING"
+                            VoiceCloneStage.SYNTHESIZING -> "STARTING STREAM"
+                            VoiceCloneStage.PLAYING -> "STREAMING"
                             else -> "VOICE READY"
                         },
                         tone = if (stage == VoiceCloneStage.SYNTHESIZING) {
@@ -995,7 +995,7 @@ private fun VoiceReadyExperience(
                     )
                     Text(
                         text = when (stage) {
-                            VoiceCloneStage.SYNTHESIZING -> "Creating your preview."
+                            VoiceCloneStage.SYNTHESIZING -> "First audio is on the way."
                             VoiceCloneStage.PLAYING -> "Listen—this is your new voice."
                             else -> "Your voice is ready."
                         },
@@ -1028,8 +1028,8 @@ private fun VoiceReadyExperience(
                     )
                     TriplexButton(
                         text = when (state.stage) {
-                            VoiceCloneStage.SYNTHESIZING -> "Creating preview"
-                            VoiceCloneStage.PLAYING -> "Playing your voice"
+                            VoiceCloneStage.SYNTHESIZING -> "Starting stream"
+                            VoiceCloneStage.PLAYING -> "Streaming your voice"
                             else -> "Speak in my voice"
                         },
                         onClick = onSpeakPreview,
