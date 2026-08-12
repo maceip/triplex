@@ -1,7 +1,7 @@
 # Speech model review
 
-Status: review complete, one candidate adopted, one benchmark outstanding
-Date: 2026-08-05
+Status: review complete; branded Inflect on-device; cloned Qwen3 LiteRT on-device (RTF unpublished)
+Date: 2026-08-11
 Feeds: `DECISION_TTS_PLACEMENT.md`
 
 Records every speech model we evaluated, including the ones we rejected and
@@ -27,7 +27,7 @@ Engine choice is per call and explicit (`RUNTIME_INVARIANTS.md` §7.6):
 | **Chatterbox Turbo** (found separately) | **350M** | **Yes, zero-shot from ~5 s** | **Official ONNX q4f16**: ~380 MB synthesis + 177 MB encoder used only at enrollment | MIT | **Smallest true cloning candidate. Not yet benchmarked.** Decoder distilled from 10 steps to 1. Original Chatterbox beat ElevenLabs 63.75 % in blind preference. |
 | **Qwen3-TTS-12Hz-1.7B-CustomVoice** | 1.7B | **No** | none | — | **Rejected.** The name misleads: "CustomVoice" is 9 preset timbres with instruction-based style control, not cloning. The cloning variant is the 0.6B Base model we already use server-side. |
 | **fishaudio/s2-pro** | **5B** | unclear | none | **Research only — commercial use needs a separate licence** | **Rejected.** Server-scale even before the licence, and the licence alone disqualifies it for a shipped product. |
-| **Qwen3-TTS-12Hz-0.6B-Base** | 601M | Yes, zero-shot | **none — no mobile export** | — | Currently integrated, server-side only. This is why cloning needs a GPU host today. |
+| **Qwen3-TTS-12Hz-0.6B-Base** | 601M | Yes, zero-shot | **LiteRT on device** (`talker_int4` + folded MTP + split codec + ECAPA TFLite) | — | **Adopted for cloned slot (on-device).** Ships via PAD fast-follow / debug download. Phone RTF gate still outstanding. |
 
 ## The finding that matters
 
@@ -45,31 +45,27 @@ quantized synthesis components total about 380 MB.
 That is not a reason for pessimism. 380 MB resident on a 16 GB phone is
 plausible; it simply has to be measured rather than assumed.
 
-## Why cloning still runs on a server today
+## Why cloning used to run on a server
 
-Not because on-device was tested and failed. **It has never been tested.** The
-integrated engine is Qwen3-TTS 0.6B Base, carried over from the earlier Python
-work, and that model has no mobile export at all. The two candidates that
-could plausibly run on a phone — Audio8 INT4 and Chatterbox Turbo q4f16 — have
-not been integrated or benchmarked.
+The earlier Python path had no mobile export. That is no longer true for the
+product app: Android now runs a LiteRT host-orchestrated decode loop plus an
+on-device ECAPA speaker encoder. Cloud `services/voice-clone` remains as a
+legacy helper, not the enrollment path.
 
 ## What has and has not been measured
 
 | Claim | Evidence |
 |---|---|
 | Branded voice runs on the phone | **Measured.** RTF 6.08 at 4 threads, 3.48 at 1 thread, 210 ms short turn, Pixel 10 Pro Fold, models as APK assets. |
-| Cloning could run on the phone | **Not measured.** Only specs and file sizes reviewed. |
+| Cloning runs on the phone | **Integrated.** Enrollment + synthesis use on-device LiteRT. **RTF / first-chunk not yet published** against the placement gate. |
 
 The branded result does not transfer: Inflect is 9.4M and feedforward, while
-the cloning candidates are 37–64× larger and autoregressive, generating token
-by token. The cost profiles are different in kind, not degree.
+the cloning stack is ~0.6B and autoregressive, generating token by token. The
+cost profiles are different in kind, not degree.
 
 ## Outstanding work
 
-Benchmark Chatterbox Turbo q4f16 and Audio8 INT4 on the Pixel against the rule
+Publish Qwen3 LiteRT RTF and first-chunk numbers on the Pixel against the rule
 already fixed in `DECISION_TTS_PLACEMENT.md`: **real-time factor above 1.5 and
-first chunk under 300 ms means cloning ships on the phone.**
-
-Start with Chatterbox Turbo — it is the smaller of the two, MIT licensed, and
-its single-step decoder removes the loop that usually dominates autoregressive
-synthesis cost.
+first chunk under 300 ms means cloning ships on the phone.** Chatterbox Turbo
+and Audio8 remain alternate candidates if Qwen3 misses the gate.

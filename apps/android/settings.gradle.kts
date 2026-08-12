@@ -22,6 +22,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "Triplex"
 include(":app")
+include(":qwen3_tts")
 
 // The platform-free turn loop. A standalone build rather than a subproject so
 // `cd dialogue && gradle test` runs the conversation tests on a bare JVM —

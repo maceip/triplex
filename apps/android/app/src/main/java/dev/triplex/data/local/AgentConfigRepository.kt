@@ -21,7 +21,7 @@ import javax.inject.Singleton
  * here, in the one place both the setup screens and the call paths go through:
  *
  * * [setInboundVoicePolicy] / [setOutboundDefaultVoicePolicy] refuse to *store*
- *   `CLONED` unless the gateway reports `synthesis_ready`, so an unusable
+ *   `CLONED` unless the on-device profile reports ready, so an unusable
  *   selection cannot be persisted in the first place;
  * * [resolveInboundVoicePolicy] / [resolveOutboundVoicePolicy] re-check at call
  *   time and return [Result.Error]. They never return `PRESET` as a

@@ -115,7 +115,8 @@ fun VoiceCloneScreen(
         onUpdatePreviewText = viewModel::updatePreviewText,
         onSpeakPreview = viewModel::speakPreview,
         onPlayReference = viewModel::playReference,
-        onRevoke = viewModel::revoke
+        onRevoke = viewModel::revoke,
+        onRetryModels = viewModel::ensureModels,
     )
 }
 
@@ -131,6 +132,7 @@ internal fun VoiceCloneContent(
     onSpeakPreview: () -> Unit,
     onPlayReference: () -> Unit,
     onRevoke: () -> Unit,
+    onRetryModels: () -> Unit = {},
     onOpenVoiceLab: (() -> Unit)? = null,
 ) {
     var leaveAfterDiscard by remember { mutableStateOf(false) }
@@ -196,7 +198,8 @@ internal fun VoiceCloneContent(
                     meter = meter,
                     leaveAfterDiscard = leaveAfterDiscard,
                     onStartCapture = onStartCapture,
-                    onFinishCapture = onFinishCapture
+                    onFinishCapture = onFinishCapture,
+                    onRetryModels = onRetryModels,
                 )
             } else {
                 VoiceReadyExperience(
@@ -286,7 +289,8 @@ private fun VoiceEnrollmentExperience(
     meter: VoiceCaptureMeter,
     leaveAfterDiscard: Boolean,
     onStartCapture: () -> Unit,
-    onFinishCapture: () -> Unit
+    onFinishCapture: () -> Unit,
+    onRetryModels: () -> Unit,
 ) {
     val spacing = RikkaTheme.spacing
     val motion = RikkaTheme.motion
@@ -337,6 +341,16 @@ private fun VoiceEnrollmentExperience(
             ) {
                 TriplexReveal {
                     VoiceEnrollmentProgress(currentIndex = progressIndex)
+                }
+
+                if (!state.modelsReady) {
+                    VoiceModelsInstallCard(
+                        installing = state.modelsInstalling,
+                        progress = state.modelsProgress,
+                        error = state.modelsError,
+                        canRetry = state.canRetryModelInstall,
+                        onRetry = onRetryModels,
+                    )
                 }
 
                 VoiceOrb(
@@ -471,6 +485,7 @@ private fun VoiceEnrollmentExperience(
                 stage = stage,
                 leaveAfterDiscard = leaveAfterDiscard,
                 maximumSeconds = meter.maximumSeconds,
+                captureEnabled = state.canEnroll,
                 onStartCapture = onStartCapture,
                 onFinishCapture = onFinishCapture,
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -510,6 +525,7 @@ private fun VoiceEnrollmentActionBar(
     stage: EnrollmentUiStage,
     leaveAfterDiscard: Boolean,
     maximumSeconds: Int,
+    captureEnabled: Boolean,
     onStartCapture: () -> Unit,
     onFinishCapture: () -> Unit,
     modifier: Modifier = Modifier
@@ -536,6 +552,7 @@ private fun VoiceEnrollmentActionBar(
             EnrollmentUiStage.RETRY -> TriplexButton(
                 text = if (stage == EnrollmentUiStage.RETRY) "Try voice capture again" else "Start reading",
                 onClick = onStartCapture,
+                enabled = captureEnabled,
                 leadingIcon = RikkaIcons.Mic,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -554,9 +571,13 @@ private fun VoiceEnrollmentActionBar(
                 EnrollmentUiStage.RECORDING ->
                     "Recording stops automatically at $maximumSeconds seconds."
                 EnrollmentUiStage.PREPARING ->
-                    "Keep this screen open while your consented profile is prepared."
+                    "Keep this screen open while your phone prepares the voice on device."
                 else ->
-                    "Used only for your Triplex voice profile · Delete anytime"
+                    if (!captureEnabled) {
+                        "Voice models must finish installing before you can record."
+                    } else {
+                        "Used only for your Triplex voice profile · Delete anytime"
+                    }
             },
             variant = TextVariant.Small,
             color = RikkaTheme.colors.onMuted.copy(alpha = 0.78f),
@@ -781,6 +802,72 @@ private fun VoicePromptStatement(
     }
 
     TranscriptText(text = prompt, color = colors.onSurface)
+}
+
+@Composable
+private fun VoiceModelsInstallCard(
+    installing: Boolean,
+    progress: Float,
+    error: String?,
+    canRetry: Boolean,
+    onRetry: () -> Unit,
+) {
+    val spacing = RikkaTheme.spacing
+    TriplexCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = when {
+            error != null -> TriplexCardTone.DANGER
+            installing -> TriplexCardTone.WARNING
+            else -> TriplexCardTone.ACCENT
+        },
+    ) {
+        Column(
+            modifier = Modifier.padding(spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
+        ) {
+            Text(
+                text = when {
+                    error != null -> "VOICE MODELS NEED ATTENTION"
+                    installing -> "INSTALLING VOICE MODELS"
+                    else -> "VOICE MODELS"
+                },
+                variant = TextVariant.Small,
+                color = RikkaTheme.colors.primary,
+            )
+            Text(
+                text = error
+                    ?: if (installing) {
+                        "Downloading the on-device clone stack so enrollment can stay on this phone."
+                    } else {
+                        "On-device voice models are not ready yet."
+                    },
+                color = RikkaTheme.colors.onMuted,
+            )
+            if (installing) {
+                Progress(
+                    progress = progress.coerceIn(0f, 1f),
+                    trackColor = RikkaTheme.colors.onSurface.copy(alpha = 0.12f),
+                    fillColor = RikkaTheme.colors.primary,
+                    height = 5.dp,
+                    animation = ProgressAnimation.None,
+                    label = "Voice model install progress",
+                )
+                Text(
+                    text = String.format(Locale.ROOT, "%.0f%%", progress.coerceIn(0f, 1f) * 100f),
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
+                )
+            }
+            if (error != null && canRetry) {
+                TriplexButton(
+                    text = "Retry download",
+                    onClick = onRetry,
+                    style = TriplexButtonStyle.SECONDARY,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1089,7 +1176,7 @@ private fun enrollmentCopy(
     EnrollmentUiStage.PREPARING -> EnrollmentCopy(
         eyebrow = "VOICE PREPARATION",
         title = "Turning your sample into your voice.",
-        description = "Your phone accepted the recording. Triplex is preparing the cloned profile through the gateway.",
+        description = "Your phone accepted the recording. Triplex is preparing the cloned profile on this device.",
         status = "PREPARING"
     )
     EnrollmentUiStage.RETRY -> EnrollmentCopy(

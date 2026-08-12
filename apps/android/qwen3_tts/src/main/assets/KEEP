@@ -1,0 +1,2 @@
+Run scripts/stage_qwen3_asset_pack.sh before assembling a release AAB.
+This placeholder keeps the asset-pack assets directory in git without binaries.

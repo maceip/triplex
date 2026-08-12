@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Push the on-device Qwen3-TTS LiteRT + ECAPA bundle into the Triplex app filesDir.
+# Prefer this for fast local iteration. Debug builds can also HTTP-download via
+# Voice Clone UI / FETCH_QWEN3_MODELS; release ships the same files in the
+# :qwen3_tts Play Asset Delivery pack (see scripts/stage_qwen3_asset_pack.sh).
 set -euo pipefail
 ADB="${ADB:-adb}"
 SERIAL="${1:?usage: $0 SERIAL}"

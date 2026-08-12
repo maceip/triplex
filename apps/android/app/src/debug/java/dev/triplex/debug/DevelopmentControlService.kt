@@ -59,6 +59,7 @@ class DevelopmentControlService : Service() {
                     ACTION_PROVISION -> provision(intent)
                     ACTION_OUTBOUND_SMOKE -> outboundSmoke(intent!!)
                     ACTION_VOICE_CLONE_SMOKE -> voiceCloneSmoke(intent)
+                    ACTION_FETCH_QWEN3_MODELS -> fetchQwen3Models()
                     ACTION_SET_CLONED_POLICY -> setClonedPolicy()
                     ACTION_HANGUP -> {
                         telephonyController.hangup()
@@ -141,6 +142,10 @@ class DevelopmentControlService : Service() {
         check(staged.isFile) {
             "reference wav missing at ${staged.absolutePath}; push with run-as first"
         }
+        when (val models = voiceCloneRepository.ensureModels()) {
+            is Result.Success -> Unit
+            is Result.Error -> error(models.message)
+        }
         val enrollMs = measureTimeMillis {
             when (
                 val prepared = voiceCloneRepository.prepareFromPhrases(
@@ -165,6 +170,17 @@ class DevelopmentControlService : Service() {
             "TRIPLEX_DEV_VOICE_CLONE PASS enroll_ms=$enrollMs preview_ms=$previewMs " +
                 "preview_bytes=${preview.length()} placement=LOCAL",
         )
+    }
+
+    private suspend fun fetchQwen3Models() {
+        val fetchMs = measureTimeMillis {
+            when (val ready = voiceCloneRepository.ensureModels()) {
+                is Result.Success -> Unit
+                is Result.Error -> error(ready.message)
+            }
+        }
+        check(voiceCloneRepository.modelsReady()) { "models still missing after fetch" }
+        Log.i(TAG, "TRIPLEX_DEV_FETCH_QWEN3 PASS fetch_ms=$fetchMs")
     }
 
     private suspend fun setClonedPolicy() {
@@ -204,6 +220,7 @@ class DevelopmentControlService : Service() {
         const val ACTION_PROVISION = "dev.triplex.debug.PROVISION"
         const val ACTION_OUTBOUND_SMOKE = "dev.triplex.debug.OUTBOUND_SMOKE"
         const val ACTION_VOICE_CLONE_SMOKE = "dev.triplex.debug.VOICE_CLONE_SMOKE"
+        const val ACTION_FETCH_QWEN3_MODELS = "dev.triplex.debug.FETCH_QWEN3_MODELS"
         const val ACTION_SET_CLONED_POLICY = "dev.triplex.debug.SET_CLONED_POLICY"
         const val ACTION_HANGUP = "dev.triplex.debug.HANGUP"
         const val EXTRA_DEVICE_TOKEN = "device_token"

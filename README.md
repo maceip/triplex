@@ -19,7 +19,7 @@ It is not a media relay.
 | `apps/android/native-media/` | Rust real-time audio path (pools, epochs, mixer). | Covered by CI allocation / agent-core jobs. |
 | `apps/android/agent/` | Rust agent-core (VAD/turn/epoch helpers used via FFI). | Unit-tested in CI; not a second Python agent. |
 | `gateway/` | Accounts, Plivo `/answer` XML, outbound route grants. | Deployed at `https://bridge.secure.build`. |
-| `services/` | Optional GPU helpers (`voice-clone`, `voice_models`). | Used when on-device clone prep is not enough. |
+| `services/` | Optional GPU helpers (`voice-clone`, `voice_models`). | Legacy / fallback only — product clone path is on-device. |
 | `testlab/` | Measurement and validation scripts. | Not shipped to users. |
 | `docs/` | Plans, invariants, TTS decisions. | Mixed age — some still govern runtime; some describe retired Python/Chime paths. |
 | `experiments/` | Retired trees (e.g. Python agent). | Reference only; does not ship. |
@@ -71,8 +71,10 @@ Gateway ◄── HTTPS ──┤  /answer XML, route grants, device ready/media
 - **Conversation loop contract.** Multi-turn listen/speak with interruption and
   fail-closed reasoner handling is real in `dialogue/` (JVM tests) and wired on
   device. Live reasoned turns still depend on an available on-device reasoner.
-- **Voice enrollment UI + on-device TTS paths.** Consent capture and Inflect /
-  Qwen3 LiteRT synthesis exist; clone *preparation* may still hit a GPU helper.
+- **Voice enrollment + on-device cloned TTS.** Consent capture, ECAPA enrollment,
+  and Qwen3 LiteRT synthesis all run on the phone. Release installs the ~1.6 GB
+  LiteRT bundle via Play Asset Delivery (`qwen3_tts` fast-follow); debug can
+  HTTP-download or `adb`-push the same files.
 - **CI.** GitHub Actions on `main` / `develop`: RT allocation guard, agent-core,
   transport validation, gateway tests, dialogue tests, Android JVM/unit build,
   evidence gate. See `.github/workflows/README.md`.
@@ -90,8 +92,9 @@ Gateway ◄── HTTPS ──┤  /answer XML, route grants, device ready/media
   handset never shows ringing. Dialer role is necessary but not sufficient.
 - **Published live reasoner latency.** Turn timings are logged; no clean answered
   multi-turn p95 is published yet.
-- **Fully on-device voice cloning.** Prep may still need `services/`; the UI is
-  meant to stay honest about placement.
+- **Cloned-voice RTF on phone.** Packaging and enrollment are on-device; published
+  RTF / first-chunk numbers for Qwen3 LiteRT on Pixel-class hardware are still
+  outstanding (see `docs/DECISION_TTS_PLACEMENT.md`).
 - **Stale docs under `docs/`.** Prefer `RUNTIME_INVARIANTS.md` and the TTS
   decision docs for product rules. `QUICKSTART.md` and parts of the unification
   series still describe retired Python / Chime worker paths — do not follow those

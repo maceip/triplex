@@ -1,0 +1,5 @@
+# Staged Qwen3 LiteRT binaries for the Play Asset Delivery pack.
+# Populate with: ../../../scripts/stage_qwen3_asset_pack.sh
+*
+!.gitignore
+!KEEP

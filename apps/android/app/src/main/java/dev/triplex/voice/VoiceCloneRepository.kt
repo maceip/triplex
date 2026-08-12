@@ -20,9 +20,20 @@ import javax.inject.Singleton
 @Singleton
 class VoiceCloneRepository @Inject constructor(
     private val promptStore: LocalVoicePromptStore,
+    private val modelStore: Qwen3ModelStore,
     private val speakerEncoder: SpeakerEncoder,
     private val qwenVoice: Qwen3CallVoice,
 ) {
+    /** Ensures the LiteRT bundle is on device (PAD / debug download / adb). */
+    suspend fun ensureModels(onProgress: (Float) -> Unit = {}): Result<Unit> {
+        return when (val ready = modelStore.ensureReady(onProgress)) {
+            is Result.Success -> Result.Success(Unit)
+            is Result.Error -> Result.Error(ready.message, ready.exception)
+        }
+    }
+
+    fun modelsReady(): Boolean = modelStore.hasModels()
+
     suspend fun status(): VoiceProfileStatus? {
         val meta = promptStore.readMeta()
         val ready = promptStore.synthesisReady()
@@ -47,18 +58,20 @@ class VoiceCloneRepository @Inject constructor(
         phraseWavs: List<File>,
         consentStatement: String,
     ): Result<VoiceProfileStatus> {
-        if (!promptStore.hasModels()) {
+        if (!modelStore.hasModels()) {
             return Result.Error(
-                "On-device voice models are not installed. Push the Qwen3 LiteRT bundle first.",
+                "On-device voice models are not installed yet. Wait for install to finish, then try again.",
             )
         }
         if (phraseWavs.isEmpty()) {
             return Result.Error("No reference recordings to enroll.")
         }
         return try {
-            val embeddings = phraseWavs.map { wav ->
-                val pcm = readMonoPcm16(wav)
-                speakerEncoder.encode(pcm)
+            val embeddings = phraseWavs.flatMap { wav ->
+                speakerEncoder.encodeWindows(readMonoPcm16(wav))
+            }
+            if (embeddings.isEmpty()) {
+                return Result.Error("Could not extract a speaker embedding from the recording.")
             }
             val centroid = speakerEncoder.centroid(embeddings)
             promptStore.writeXVector(centroid)
@@ -100,8 +113,9 @@ class VoiceCloneRepository @Inject constructor(
 
     /** Synthesizes [text] in the cloned voice and writes a WAV to [target]. */
     suspend fun preview(text: String, target: File): Result<File> {
-        val spk = promptStore.readXVector()
-            ?: return Result.Error("No prepared voice profile")
+        if (promptStore.readXVector() == null) {
+            return Result.Error("No prepared voice profile")
+        }
         return try {
             val chunks = ArrayList<ShortArray>()
             qwenVoice.synthesizeStream(text).collect { chunk ->

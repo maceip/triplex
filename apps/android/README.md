@@ -10,6 +10,7 @@ This module is the product. Python under `experiments/` does not ship here.
 | Module | Role |
 |---|---|
 | `:app` | UI, Hilt wiring, SODA, AICore reasoner, Inflect/Qwen TTS, telephony controller, enrollment. |
+| `:qwen3_tts` | Play Asset Delivery fast-follow pack for the on-device Qwen3 LiteRT + ECAPA bundle (~1.6 GB; staged, not committed). |
 | `:telephony-plivo` | PJSIP Plivo Direct adapter (JNI + C++). See `telephony-plivo/README.md`. |
 | `:dialogue` (included build) | Conversation loop + spoken-reply sanitizer; JVM unit tests, no Android SDK. |
 | `native-media/` | Rust RT audio (built via `scripts/prepare-native.sh`, linked from the app). |
@@ -51,10 +52,26 @@ module in this app. Live call audio is Plivo Direct + SODA + LiteRT TTS.
 ```properties
 sdk.dir=/path/to/android/sdk
 gateway.url=https://bridge.secure.build
+# Optional debug host that serves the Triplex Qwen3 cache layout
+# (talker_int4.tflite, tables/*.npy, speaker_encoder.tflite, …):
+# qwen3.model.base.url=http://10.0.2.2:8765
 ```
 
 Emulator-only gateway URLs (`http://10.0.2.2:8000`) are fine for local gateway
 dev; production phones should use the deployed gateway.
+
+## On-device voice clone models
+
+Cloned TTS needs the Qwen3 LiteRT + ECAPA bundle under `filesDir/models/qwen3-tts`
+(or the `qwen3_tts` asset-pack path on release).
+
+| Build | How models arrive |
+|---|---|
+| **Release** | Play Asset Delivery fast-follow pack `:qwen3_tts`. Stage binaries before the AAB: `../../scripts/stage_qwen3_asset_pack.sh` (reads `$QWEN_MODEL_DIR` or `~/.cache/triplex/qwen3-tts-0.6b-litert`). |
+| **Debug** | In-app HTTP download from `BuildConfig.QWEN3_MODEL_BASE_URL`, or `../../scripts/push_qwen3_models.sh <serial>`, or `adb shell am broadcast -a dev.triplex.debug.FETCH_QWEN3_MODELS`. |
+
+Enrollment encodes overlapping ~5 s ECAPA windows and verifies synthesis locally.
+The Voice Clone screen blocks capture until models are ready.
 
 ## Build and install
 

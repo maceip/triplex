@@ -1,7 +1,7 @@
 # Decision record: TTS placement
 
-Status: branded slot decided, cloned slot open
-Date: 2026-08-05
+Status: branded slot decided; cloned slot on-device Qwen3 LiteRT (RTF unpublished)
+Date: 2026-08-11
 Phase 4 of `FINAL_UNIFICATION.md`
 
 ## Decision rule, fixed before measuring
@@ -48,28 +48,26 @@ which is the useful ratio to carry into the cloned-slot estimate.
   call and a missing cloned profile fails closed rather than silently
   substituting this branded voice.
 
-## Cloned slot — OPEN
+## Cloned slot — ON-DEVICE Qwen3 LiteRT (RTF gate still open)
 
-Not yet measured. Candidates, both with official ONNX exports and streaming:
+Product path is local: consented capture → ECAPA x-vector (multi-window
+centroid) → Qwen3 LiteRT synthesis. Models arrive via Play Asset Delivery
+fast-follow pack `qwen3_tts` (~1.6 GB) on release, or debug HTTP/`adb` push.
+
+Placement rule still applies for *performance*: RTF above 1.5 and first chunk
+under 300 ms on device means we keep synthesis local without further offload.
+Those numbers for Qwen3 LiteRT on Pixel-class hardware are not published yet.
+Chatterbox Turbo q4f16 and Audio8 INT4 remain alternate candidates if the gate
+is missed.
 
 | Candidate | Synthesis components (quantized) | Licence | Note |
 |---|---|---|---|
-| Chatterbox Turbo q4f16 | ~380 MB resident, 177 MB encoder used only at enrollment | MIT | Distilled 1-step decoder; beat ElevenLabs 63.75 % in blind preference |
-| Audio8 INT4 | ~572 MB online files, 1.1–1.2 GiB RAM at synthesis, 1.55 GiB at registration | Apache 2.0 | Demonstrated on an M2 CPU; preview checkpoint |
+| **Qwen3 LiteRT 0.6B (shipped path)** | ~1.6 GB on-device bundle | — | Integrated; PAD / debug download |
+| Chatterbox Turbo q4f16 | ~380 MB resident, 177 MB encoder used only at enrollment | MIT | Distilled 1-step decoder; not integrated |
+| Audio8 INT4 | ~572 MB online files, 1.1–1.2 GiB RAM at synthesis | Apache 2.0 | Preview checkpoint; not integrated |
 
-The branded result is encouraging for this slot but does not settle it: these
-models are 35–60× larger in parameter count and autoregressive, so the 40 %
-host-to-phone ratio is a starting estimate, not a prediction.
-
-Per Phase 1, per-word alignment marks are **desirable but no longer required**
-— `TtsHost` emits a chunk-end mark unconditionally, so an engine without
-trustworthy word timestamps degrades to whole-segment retention rather than
-breaking heard-state.
-
-Preparation placement follows the same rule. On-device enrollment is preferred;
-if it does not fit, one-time cloud preparation returning a signed artifact is
-the fallback, and a desktop companion app is not warranted for a single
-ten-second operation.
+Preparation placement: on-device enrollment is the product path. Cloud
+`services/voice-clone` is legacy.
 
 ## Reproducing
 

@@ -33,7 +33,7 @@ class SpeakerEncoder @Inject constructor(
     private val interpreter by lazy {
         val model = File(modelsDir, "speaker_encoder.tflite")
         check(model.isFile) {
-            "Missing on-device speaker encoder at ${model.absolutePath}. Push models first."
+            "Missing on-device speaker encoder at ${model.absolutePath}."
         }
         Interpreter(
             model,
@@ -70,6 +70,33 @@ class SpeakerEncoder @Inject constructor(
         check(embedding.all { it.isFinite() }) { "Speaker encoder returned non-finite values" }
         Timber.i("Speaker embedding extracted: dim=%d", embedding.size)
         return embedding
+    }
+
+    /**
+     * Encodes overlapping ~5 s windows across [pcm24k] and returns one embedding
+     * per window. A short clip yields a single window (same as [encode]).
+     */
+    fun encodeWindows(pcm24k: ShortArray): List<FloatArray> {
+        if (pcm24k.isEmpty()) return emptyList()
+        if (pcm24k.size <= WINDOW_SAMPLES) {
+            return listOf(encode(pcm24k))
+        }
+        val embeddings = ArrayList<FloatArray>()
+        var start = 0
+        while (start + WINDOW_SAMPLES <= pcm24k.size) {
+            embeddings += encode(pcm24k.copyOfRange(start, start + WINDOW_SAMPLES))
+            val next = start + WINDOW_HOP_SAMPLES
+            if (next + WINDOW_SAMPLES > pcm24k.size) break
+            start = next
+        }
+        // Always include a final window anchored at the end so the last seconds
+        // of a long consent take contribute to the centroid.
+        val tailStart = pcm24k.size - WINDOW_SAMPLES
+        if (tailStart > start) {
+            embeddings += encode(pcm24k.copyOfRange(tailStart, pcm24k.size))
+        }
+        Timber.i("Speaker windows encoded: %d (pcm=%d)", embeddings.size, pcm24k.size)
+        return embeddings
     }
 
     /** Centroid of several embeddings (L2 of mean; raw mean is fine for Qwen). */
@@ -205,5 +232,9 @@ class SpeakerEncoder @Inject constructor(
         const val NUM_MELS = 128
         const val NUM_FRAMES = 469
         const val EMBED_DIM = 1_024
+        /** PCM samples that fill the encoder's 469-frame mel window. */
+        const val WINDOW_SAMPLES = NUM_FRAMES * HOP
+        /** Half-window hop so consecutive windows overlap ~50%. */
+        const val WINDOW_HOP_SAMPLES = WINDOW_SAMPLES / 2
     }
 }

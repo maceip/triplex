@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.triplex.BuildConfig
 import dev.triplex.data.repository.Result
 import dev.triplex.voice.ReferenceAudio
 import dev.triplex.voice.VoiceCloneRepository
@@ -45,10 +46,20 @@ data class VoiceCloneState(
     val captureSnrDb: Float? = null,
     val previewText: String = DEFAULT_PREVIEW_TEXT,
     val error: String? = null,
-    val message: String? = null
+    val message: String? = null,
+    val modelsReady: Boolean = false,
+    val modelsInstalling: Boolean = false,
+    val modelsProgress: Float = 0f,
+    val modelsError: String? = null,
+    val canRetryModelInstall: Boolean = BuildConfig.DEBUG,
 ) {
     val busy: Boolean
-        get() = stage == VoiceCloneStage.PREPARING || stage == VoiceCloneStage.SYNTHESIZING
+        get() = stage == VoiceCloneStage.PREPARING ||
+            stage == VoiceCloneStage.SYNTHESIZING ||
+            modelsInstalling
+
+    val canEnroll: Boolean
+        get() = modelsReady && !busy
 }
 
 data class VoiceCaptureMeter(
@@ -88,6 +99,7 @@ class VoiceCloneViewModel @Inject constructor(
 
     private var recordJob: Job? = null
     private var meterJob: Job? = null
+    private var modelsJob: Job? = null
     @Volatile private var discardCurrentCapture = false
 
     private val referenceFile: File
@@ -101,6 +113,7 @@ class VoiceCloneViewModel @Inject constructor(
 
     init {
         refresh()
+        ensureModels()
     }
 
     fun refresh() {
@@ -111,14 +124,70 @@ class VoiceCloneViewModel @Inject constructor(
                 placement = status.placement,
                 placementReason = status.placement_reason,
                 referenceSeconds = status.reference_seconds,
+                modelsReady = repository.modelsReady(),
                 stage = if (status.synthesis_ready) VoiceCloneStage.READY else _state.value.stage
             )
+        }
+    }
+
+    fun ensureModels() {
+        if (modelsJob?.isActive == true) return
+        if (repository.modelsReady()) {
+            _state.value = _state.value.copy(
+                modelsReady = true,
+                modelsInstalling = false,
+                modelsProgress = 1f,
+                modelsError = null,
+            )
+            return
+        }
+        modelsJob = viewModelScope.launch {
+            _state.value = _state.value.copy(
+                modelsInstalling = true,
+                modelsProgress = 0f,
+                modelsError = null,
+                message = if (BuildConfig.DEBUG) {
+                    "Downloading on-device voice models…"
+                } else {
+                    "Installing on-device voice models…"
+                },
+            )
+            when (
+                val result = repository.ensureModels { progress ->
+                    _state.value = _state.value.copy(modelsProgress = progress.coerceIn(0f, 1f))
+                }
+            ) {
+                is Result.Success -> {
+                    _state.value = _state.value.copy(
+                        modelsReady = true,
+                        modelsInstalling = false,
+                        modelsProgress = 1f,
+                        modelsError = null,
+                        message = "Voice models ready on this phone",
+                    )
+                }
+                is Result.Error -> {
+                    _state.value = _state.value.copy(
+                        modelsReady = false,
+                        modelsInstalling = false,
+                        modelsError = result.message,
+                        message = null,
+                    )
+                }
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     fun startRecording() {
         if (recordJob != null) return
+        if (!_state.value.modelsReady) {
+            _state.value = _state.value.copy(
+                error = "Voice models are not ready yet. Finish install, then try again.",
+            )
+            ensureModels()
+            return
+        }
         discardCurrentCapture = false
         pendingReferenceFile.delete()
         _captureMeter.value = VoiceCaptureMeter()
@@ -158,8 +227,7 @@ class VoiceCloneViewModel @Inject constructor(
             }
 
             // The quality gate runs on-device: a reference that cannot produce
-            // a good voice is rejected here, with specific guidance, instead of
-            // being uploaded and burning model time.
+            // a good voice is rejected here, with specific guidance.
             when (result) {
                 is ReferenceAudio.Result.Usable -> {
                     _state.value = _state.value.copy(
@@ -304,7 +372,10 @@ class VoiceCloneViewModel @Inject constructor(
                     referenceFile.delete()
                     previewFile.delete()
                     pendingReferenceFile.delete()
-                    _state.value = VoiceCloneState(message = "Voice profile revoked")
+                    _state.value = VoiceCloneState(
+                        message = "Voice profile revoked",
+                        modelsReady = repository.modelsReady(),
+                    )
                 }
                 is Result.Error -> _state.value = _state.value.copy(error = result.message)
             }
@@ -315,6 +386,7 @@ class VoiceCloneViewModel @Inject constructor(
         discardCurrentCapture = true
         recorder.stop()
         meterJob?.cancel()
+        modelsJob?.cancel()
         pendingReferenceFile.delete()
         super.onCleared()
     }

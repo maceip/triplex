@@ -48,7 +48,20 @@ android {
                 "https://func-triplex-ingest-production.azurewebsites.net",
             )}\"",
         )
+        // Debug HTTP fetch of the Qwen3 LiteRT bundle. Point this at a host that
+        // serves the Triplex cache layout (see Qwen3ModelFiles.ARTIFACTS), e.g.
+        // `python -m http.server` over ~/.cache/triplex/qwen3-tts-0.6b-litert.
+        buildConfigField(
+            "String",
+            "QWEN3_MODEL_BASE_URL",
+            "\"${localProperties.getProperty(
+                "qwen3.model.base.url",
+                "https://huggingface.co/litert-community/Qwen3-TTS-12Hz-0.6B-Base/resolve/main",
+            )}\"",
+        )
     }
+
+    assetPacks += setOf(":qwen3_tts")
 
     buildTypes {
         release {
@@ -203,6 +216,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-javalite:4.34.1")
     implementation("com.getkeepsafe.relinker:relinker:1.4.5")
     implementation("com.google.guava:guava:33.6.0-android")
+    implementation(libs.play.asset.delivery)
+    implementation(libs.play.asset.delivery.ktx)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

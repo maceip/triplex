@@ -19,6 +19,7 @@ class DevelopmentControlReceiver : BroadcastReceiver() {
             DevelopmentControlService.ACTION_PROVISION,
             DevelopmentControlService.ACTION_OUTBOUND_SMOKE,
             DevelopmentControlService.ACTION_VOICE_CLONE_SMOKE,
+            DevelopmentControlService.ACTION_FETCH_QWEN3_MODELS,
             DevelopmentControlService.ACTION_SET_CLONED_POLICY,
             DevelopmentControlService.ACTION_HANGUP,
             -> {

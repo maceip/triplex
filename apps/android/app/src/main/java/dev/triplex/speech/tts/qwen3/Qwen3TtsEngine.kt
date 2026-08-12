@@ -37,7 +37,8 @@ import kotlin.math.min
  * directory, which reproduces the PyTorch implementation token-for-token
  * under greedy decoding.
  *
- * All model files live in [dir] (pushed by `install_to_device.sh`).
+ * All model files live in [dir] (resolved by [dev.triplex.voice.Qwen3ModelStore]
+ * via PAD, debug download, or adb push).
  */
 class Qwen3TtsEngine(private val dir: File) {
 

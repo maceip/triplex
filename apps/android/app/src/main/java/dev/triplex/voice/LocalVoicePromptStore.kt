@@ -19,6 +19,7 @@ import javax.inject.Singleton
 @Singleton
 class LocalVoicePromptStore @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val modelStore: Qwen3ModelStore,
 ) {
     private val root: File
         get() = File(context.filesDir, "voice_prompt").also { it.mkdirs() }
@@ -35,10 +36,7 @@ class LocalVoicePromptStore @Inject constructor(
         val placementReason: String = "on-device Qwen3-TTS + ECAPA speaker encoder",
     )
 
-    fun hasModels(): Boolean {
-        val models = File(context.filesDir, "models/qwen3-tts")
-        return REQUIRED_MODELS.all { File(models, it).isFile }
-    }
+    fun hasModels(): Boolean = modelStore.hasModels()
 
     fun readXVector(): FloatArray? {
         val file = xVectorFile
@@ -98,7 +96,7 @@ class LocalVoicePromptStore @Inject constructor(
         return meta.synthesisReady && readXVector() != null && hasModels()
     }
 
-    fun modelsDir(): File = File(context.filesDir, "models/qwen3-tts")
+    fun modelsDir(): File = modelStore.modelsDir()
 
     private fun writeFloat32Npy(file: File, data: FloatArray) {
         val headerDict = "{'descr': '<f4', 'fortran_order': False, 'shape': (${data.size},), }"
@@ -137,19 +135,5 @@ class LocalVoicePromptStore @Inject constructor(
 
     private companion object {
         const val Magic = "" // unused; written explicitly above
-        val REQUIRED_MODELS = listOf(
-            "talker_int4.tflite",
-            "mtp_folded_int8.tflite",
-            "codec_partA.tflite",
-            "codec_partB.tflite",
-            "vocab.json",
-            "merges.txt",
-            "codec_embedding_fp32.npy",
-            "mtp_embeddings_fp16.npy",
-            "text_embedding_fp16.npy",
-            "text_projection_fp32.npz",
-            "speaker_encoder.tflite",
-            "mel_basis_slaney_128.npy",
-        )
     }
 }
