@@ -53,10 +53,16 @@ Gateway will be available at `http://localhost:8000`
 ### Authentication
 - `POST /auth/register` - Register user account
 
+### Entitlements and line allocation
+- `POST /entitlements/claim` - Verify Play/stub entitlement and allocate DID + SIP endpoint
+- `GET /devices/line` - Assigned Triplex DID and SIP credentials
+- `POST /admin/inventory/numbers` - Seed unassigned Plivo DIDs (`X-Admin-Key`)
+
 ### Device Management
 - `POST /devices/register` - Register device (requires device token)
 - `POST /devices/ready` - Set device ready status
 - `GET /devices/status` - Get device connection status
+- `GET /devices/sip-credentials` - Fetch SIP credentials (402 without entitlement when unprovisioned)
 
 ### Plivo Webhooks
 - `POST /answer` - Signature-validated inbound and outbound endpoint routing

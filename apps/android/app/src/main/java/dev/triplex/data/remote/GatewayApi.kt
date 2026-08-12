@@ -44,6 +44,22 @@ data class SipCredentials(
 )
 
 @Serializable
+data class ClaimEntitlementRequest(
+    val product_id: String,
+    val purchase_token: String? = null,
+    val stub_unlock: String? = null,
+)
+
+@Serializable
+data class LineAllocation(
+    val did: String,
+    val sip: SipCredentials,
+    val status: String,
+    val entitlement_source: String,
+    val product_id: String,
+)
+
+@Serializable
 data class VoiceProfileStatus(
     val profile_id: String? = null,
     val synthesis_ready: Boolean = false,
@@ -145,6 +161,39 @@ class GatewayApi @Inject constructor(
 
     suspend fun getSipCredentials(deviceToken: String): SipCredentials? {
         val response = client.get("/devices/sip-credentials") {
+            header("X-Device-Token", deviceToken)
+        }
+        if (response.status != HttpStatusCode.OK) {
+            return null
+        }
+        return response.body()
+    }
+
+    suspend fun claimEntitlement(
+        productId: String,
+        purchaseToken: String?,
+        stubUnlock: String?,
+        deviceToken: String,
+    ): LineAllocation {
+        val response = client.post("/entitlements/claim") {
+            contentType(ContentType.Application.Json)
+            header("X-Device-Token", deviceToken)
+            setBody(
+                ClaimEntitlementRequest(
+                    product_id = productId,
+                    purchase_token = purchaseToken,
+                    stub_unlock = stubUnlock,
+                )
+            )
+        }
+        if (response.status != HttpStatusCode.OK) {
+            throw IllegalStateException(extractDetail(response.bodyAsText()))
+        }
+        return response.body()
+    }
+
+    suspend fun getDeviceLine(deviceToken: String): LineAllocation? {
+        val response = client.get("/devices/line") {
             header("X-Device-Token", deviceToken)
         }
         if (response.status != HttpStatusCode.OK) {

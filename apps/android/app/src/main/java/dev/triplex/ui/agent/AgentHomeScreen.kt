@@ -15,8 +15,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import dev.triplex.domain.model.TaskDefinition
 import dev.triplex.telephony.sip.TelephonyController.SipState
 import dev.triplex.ui.components.TriplexButton
@@ -66,6 +70,7 @@ fun AgentHomeScreen(
     val sipState by viewModel.sipState.collectAsState()
     val runs by viewModel.runs.collectAsState()
     val spacing = RikkaTheme.spacing
+    val activity = LocalContext.current.findActivity()
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -102,10 +107,13 @@ fun AgentHomeScreen(
                     clonedVoiceReady = state.clonedVoiceReady,
                     routingAttested = state.routingAttested,
                     hasSipCredentials = state.hasSipCredentials,
+                    unlockingLine = state.unlockingLine,
+                    triplexDid = state.triplexDid,
                     activeTask = state.activeTask,
                     error = state.error,
                     onDismissError = viewModel::dismissError,
                     onStopTask = { id -> viewModel.stopTask(id) },
+                    onUnlockLine = { viewModel.unlockLine(activity) },
                     onOpenInbound = onOpenInbound,
                     onOpenOutbound = onOpenOutbound,
                     onOpenCallForward = onOpenCallForward,
@@ -136,10 +144,13 @@ private fun AgentStatusTray(
     clonedVoiceReady: Boolean,
     routingAttested: Boolean,
     hasSipCredentials: Boolean,
+    unlockingLine: Boolean,
+    triplexDid: String?,
     activeTask: TaskDefinition?,
     error: String?,
     onDismissError: () -> Unit,
     onStopTask: (String) -> Unit,
+    onUnlockLine: () -> Unit,
     onOpenInbound: () -> Unit,
     onOpenOutbound: () -> Unit,
     onOpenCallForward: () -> Unit,
@@ -207,6 +218,13 @@ private fun AgentStatusTray(
                     variant = TextVariant.Small,
                     color = RikkaTheme.colors.onMuted,
                 )
+                triplexDid?.let { did ->
+                    Text(
+                        text = "Line $did",
+                        variant = TextVariant.Small,
+                        color = RikkaTheme.colors.onMuted,
+                    )
+                }
             }
         }
 
@@ -220,6 +238,14 @@ private fun AgentStatusTray(
             ),
             verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
+            if (!hasSipCredentials) {
+                TriplexButton(
+                    text = if (unlockingLine) "Unlocking line…" else "Unlock Triplex line",
+                    onClick = onUnlockLine,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !unlockingLine,
+                )
+            }
             TriplexButton(
                 text = "Try your agent",
                 onClick = onOpenVoiceLab,
@@ -450,3 +476,12 @@ internal fun taskTypeLabel(raw: String): String = raw
     .lowercase()
     .split('_')
     .joinToString(" ") { it.replaceFirstChar(Char::titlecase) }
+
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}

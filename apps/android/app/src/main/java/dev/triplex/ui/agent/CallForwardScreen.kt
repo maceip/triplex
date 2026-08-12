@@ -24,6 +24,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import dev.triplex.data.local.SecureStorage
+import dev.triplex.data.repository.UserRepository
 import dev.triplex.telephony.sip.TelephonyController
 import dev.triplex.telephony.sip.TelephonyController.SipState
 import dev.triplex.ui.components.TriplexButton
@@ -36,6 +37,7 @@ import dev.triplex.ui.journey.JourneyHero
 import dev.triplex.ui.journey.JourneyScreenColumn
 import dev.triplex.ui.journey.JourneyStageRail
 import dev.triplex.ui.journey.JourneyStagger
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,7 +49,6 @@ import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
 import zed.rainxch.rikkaui.components.ui.text.Text
 import zed.rainxch.rikkaui.components.ui.text.TextVariant
 import zed.rainxch.rikkaui.foundation.RikkaTheme
-import javax.inject.Inject
 
 data class CallForwardState(
     val stageIndex: Int = 0,
@@ -62,6 +63,7 @@ data class CallForwardState(
 class CallForwardViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val secureStorage: SecureStorage,
+    private val userRepository: UserRepository,
     telephonyController: TelephonyController,
 ) : ViewModel() {
     private val _state = MutableStateFlow(CallForwardState())
@@ -83,19 +85,30 @@ class CallForwardViewModel @Inject constructor(
     }
 
     fun refresh() {
-        val username = secureStorage.getPlivoUsername()?.trim().orEmpty()
-        val target = username.takeIf { it.isNotBlank() }?.let { formatForwardTarget(it) }
-        _state.value = _state.value.copy(
-            triplexTarget = target,
-            hasCredentials = username.isNotBlank() &&
-                !secureStorage.getPlivoPassword().isNullOrBlank(),
-            routingAttested = secureStorage.isRoutingAttested(),
-            stageIndex = when {
-                secureStorage.isRoutingAttested() -> 3
-                target != null -> 1
-                else -> 0
-            },
-        )
+        viewModelScope.launch {
+            val did = userRepository.syncLineDid()
+                ?: secureStorage.getTriplexDid()
+            val username = secureStorage.getPlivoUsername()?.trim().orEmpty()
+            val target = did?.takeIf { it.isNotBlank() }
+            _state.value = _state.value.copy(
+                triplexTarget = target,
+                hasCredentials = username.isNotBlank() &&
+                    !secureStorage.getPlivoPassword().isNullOrBlank(),
+                routingAttested = secureStorage.isRoutingAttested(),
+                message = when {
+                    target == null && username.isNotBlank() ->
+                        "Entitled, but no Triplex DID is assigned yet. Unlock the line again or contact support."
+                    target == null ->
+                        "Unlock the Triplex line first, then forward your SIM here."
+                    else -> _state.value.message
+                },
+                stageIndex = when {
+                    secureStorage.isRoutingAttested() -> 3
+                    target != null -> 1
+                    else -> 0
+                },
+            )
+        }
     }
 
     fun goToStage(index: Int) {
@@ -137,15 +150,6 @@ class CallForwardViewModel @Inject constructor(
         if (digits.isBlank()) return null
         // GSM MMI: **61*<number># — carriers vary; user confirms in dialer.
         return "$prefix$digits#"
-    }
-
-    private fun formatForwardTarget(username: String): String {
-        val digits = username.filter { it.isDigit() }
-        return when {
-            username.startsWith("+") -> username
-            digits.length in 10..15 -> "+$digits"
-            else -> username
-        }
     }
 }
 

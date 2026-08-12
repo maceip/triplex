@@ -1,13 +1,16 @@
 package dev.triplex.ui.agent
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.triplex.data.local.AgentConfigRepository
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.local.db.AgentRunDao
+import dev.triplex.data.repository.EntitlementRepository
 import dev.triplex.data.repository.Result
 import dev.triplex.data.repository.TaskRepository
+import dev.triplex.data.repository.UserRepository
 import dev.triplex.domain.model.AgentStatus
 import dev.triplex.domain.model.TaskDefinition
 import dev.triplex.telephony.sip.OutboundCallCoordinator
@@ -26,11 +29,13 @@ data class AgentHomeState(
     val tasks: List<TaskDefinition> = emptyList(),
     val activeTask: TaskDefinition? = null,
     val loading: Boolean = false,
+    val unlockingLine: Boolean = false,
     val error: String? = null,
     val autoAnswerAll: Boolean = true,
     val clonedVoiceReady: Boolean = false,
     val routingAttested: Boolean = false,
     val hasSipCredentials: Boolean = false,
+    val triplexDid: String? = null,
 )
 
 /**
@@ -47,6 +52,8 @@ class AgentHomeViewModel @Inject constructor(
     private val agentConfig: AgentConfigRepository,
     private val telephonyController: TelephonyController,
     private val secureStorage: SecureStorage,
+    private val entitlementRepository: EntitlementRepository,
+    private val userRepository: UserRepository,
     runDao: AgentRunDao,
 ) : ViewModel() {
 
@@ -91,12 +98,45 @@ class AgentHomeViewModel @Inject constructor(
     /** Re-read on resume: the clone can become ready while this screen is open. */
     fun refreshVoiceReadiness() {
         viewModelScope.launch {
+            entitlementRepository.refreshLine()
+            userRepository.syncSipCredentials()
             _state.value = _state.value.copy(
                 clonedVoiceReady = agentConfig.clonedVoiceAvailable(),
                 routingAttested = secureStorage.isRoutingAttested(),
                 hasSipCredentials = !secureStorage.getPlivoUsername().isNullOrBlank() &&
                     !secureStorage.getPlivoPassword().isNullOrBlank(),
+                triplexDid = secureStorage.getTriplexDid(),
             )
+        }
+    }
+
+    fun unlockLine(activity: Activity?) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(unlockingLine = true, error = null)
+            when (val result = entitlementRepository.unlockLine(activity)) {
+                is Result.Success -> {
+                    if (result.data != null) {
+                        userRepository.syncSipCredentials()
+                        _state.value = _state.value.copy(
+                            unlockingLine = false,
+                            hasSipCredentials = true,
+                            triplexDid = result.data.did,
+                        )
+                    } else {
+                        // Billing sheet launched; purchase token lands later.
+                        _state.value = _state.value.copy(
+                            unlockingLine = false,
+                            error = "Complete the Play purchase, then tap Unlock again.",
+                        )
+                    }
+                }
+                is Result.Error -> {
+                    _state.value = _state.value.copy(
+                        unlockingLine = false,
+                        error = result.message,
+                    )
+                }
+            }
         }
     }
 

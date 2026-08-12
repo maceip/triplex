@@ -52,6 +52,7 @@ junitVersion = "1.2.1"
 espressoCore = "3.6.1"
 mockk = "1.13.13"
 playAssetDelivery = "2.3.0"
+billing = "7.1.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -99,6 +100,7 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 play-asset-delivery = { group = "com.google.android.play", name = "asset-delivery", version.ref = "playAssetDelivery" }
 play-asset-delivery-ktx = { group = "com.google.android.play", name = "asset-delivery-ktx", version.ref = "playAssetDelivery" }
+billing = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "billing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

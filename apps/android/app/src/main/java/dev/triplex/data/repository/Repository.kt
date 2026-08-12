@@ -63,11 +63,27 @@ class UserRepository @Inject constructor(
             }
             storage.setPlivoUsername(credentials.username)
             storage.setPlivoPassword(credentials.password)
+            storage.setPlivoDomain(credentials.domain)
             Timber.i("SIP credentials synced for %s", credentials.domain)
             true
         } catch (e: Exception) {
             Timber.w(e, "SIP credential sync failed")
             false
+        }
+    }
+
+    suspend fun syncLineDid(): String? {
+        val token = storage.getDeviceToken() ?: return storage.getTriplexDid()
+        return try {
+            val line = api.getDeviceLine(token) ?: return storage.getTriplexDid()
+            storage.setTriplexDid(line.did)
+            storage.setPlivoUsername(line.sip.username)
+            storage.setPlivoPassword(line.sip.password)
+            storage.setPlivoDomain(line.sip.domain)
+            line.did
+        } catch (e: Exception) {
+            Timber.w(e, "Line sync failed")
+            storage.getTriplexDid()
         }
     }
 

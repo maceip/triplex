@@ -141,7 +141,7 @@ class DeviceRegistrationDB(Base):
 
 
 class SipCredentialDB(Base):
-    """Provider SIP endpoint credentials, admin-seeded per user.
+    """Provider SIP endpoint credentials, admin-seeded or allocated per user.
 
     The device fetches these once registered; the gateway is the only place
     provider credentials live long-term (placement rules: numbers/credentials
@@ -164,6 +164,36 @@ class SipCredentialDB(Base):
     password: Mapped[str] = mapped_column(String(255), nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
     realm: Mapped[Optional[str]] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class EntitlementDB(Base):
+    """Play (or stub) product entitlement that gates DID + SIP allocation."""
+
+    __tablename__ = "entitlements"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    source: Mapped[Literal["stub", "play"]] = mapped_column(String(16), nullable=False)
+    purchase_token: Mapped[Optional[str]] = mapped_column(String(512), unique=True)
+    status: Mapped[Literal["active", "revoked"]] = mapped_column(
+        String(16), default="active", nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

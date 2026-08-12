@@ -59,6 +59,16 @@ android {
                 "https://huggingface.co/litert-community/Qwen3-TTS-12Hz-0.6B-Base/resolve/main",
             )}\"",
         )
+        buildConfigField(
+            "String",
+            "ENTITLEMENT_PRODUCT_ID",
+            "\"${localProperties.getProperty("entitlement.product.id", "triplex.line.v1")}\"",
+        )
+        buildConfigField(
+            "String",
+            "ENTITLEMENT_STUB_UNLOCK",
+            "\"${localProperties.getProperty("entitlement.stub.unlock", "triplex-dev-unlock")}\"",
+        )
     }
 
     assetPacks += setOf(":qwen3_tts")
@@ -218,6 +228,7 @@ dependencies {
     implementation("com.google.guava:guava:33.6.0-android")
     implementation(libs.play.asset.delivery)
     implementation(libs.play.asset.delivery.ktx)
+    implementation(libs.billing)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

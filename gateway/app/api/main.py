@@ -47,6 +47,15 @@ from ..models.schemas import (
 )
 from ..services import AuditService, AuthService, RoutingService, TaskService
 from ..services.routing import InboundDecision
+from ..services.line_allocation import (
+    EntitlementError,
+    LineAllocationService,
+)
+from ..services.plivo_provisioning import (
+    HttpxPlivoClient,
+    PlivoProvisioningClient,
+    PlivoProvisioningError,
+)
 from .webauthn import (
     RegistrationStartRequest,
     RegistrationStartResponse,
@@ -225,6 +234,66 @@ class ScreeningSessionResponse(BaseModel):
     decision: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class ClaimEntitlementRequest(BaseModel):
+    product_id: str
+    purchase_token: Optional[str] = None
+    stub_unlock: Optional[str] = None
+
+
+class SipCredentialsPayload(BaseModel):
+    provider: str
+    username: str
+    password: str
+    domain: str
+    realm: Optional[str] = None
+
+
+class LineAllocationResponse(BaseModel):
+    did: str
+    sip: SipCredentialsPayload
+    status: Literal["allocated", "existing"]
+    entitlement_source: Literal["stub", "play"]
+    product_id: str
+
+
+class SeedInventoryRequest(BaseModel):
+    numbers: list[str]
+
+
+class SeedInventoryResponse(BaseModel):
+    seeded: list[str]
+
+
+def _plivo_provisioning_client() -> PlivoProvisioningClient:
+    auth_id = settings.plivo_auth_id
+    if auth_id is None:
+        raise HTTPException(
+            status_code=503, detail="PLIVO_AUTH_ID is required for line provisioning"
+        )
+    return PlivoProvisioningClient(
+        HttpxPlivoClient(
+            auth_id.get_secret_value(),
+            settings.plivo_auth_token.get_secret_value(),
+        ),
+        application_id=settings.plivo_application_id,
+        number_country=settings.plivo_number_country,
+        number_type=settings.plivo_number_type,
+        sip_domain=settings.plivo_sip_domain,
+    )
+
+
+def _line_service(db: AsyncSession) -> LineAllocationService:
+    return LineAllocationService(db, _plivo_provisioning_client())
+
+
+def _require_admin(admin_key: Optional[str]) -> None:
+    configured_admin_key = settings.admin_api_key
+    if configured_admin_key is None:
+        raise HTTPException(status_code=503, detail="Admin API disabled")
+    if admin_key != configured_admin_key.get_secret_value():
+        raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
 @app.get("/health")
@@ -547,11 +616,7 @@ async def seed_sip_credentials(
     admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
     db: AsyncSession = Depends(get_db),
 ):
-    configured_admin_key = settings.admin_api_key
-    if configured_admin_key is None:
-        raise HTTPException(status_code=503, detail="Admin API disabled")
-    if admin_key != configured_admin_key.get_secret_value():
-        raise HTTPException(status_code=403, detail="Invalid admin key")
+    _require_admin(admin_key)
 
     auth_service = AuthService(db)
     user = await auth_service.get_user_by_email(request.email)
@@ -580,6 +645,80 @@ async def seed_sip_credentials(
     )
 
 
+@app.post("/admin/inventory/numbers", response_model=SeedInventoryResponse)
+async def seed_inventory_numbers(
+    request: SeedInventoryRequest,
+    admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(admin_key)
+    if not request.numbers:
+        raise HTTPException(status_code=422, detail="numbers must not be empty")
+    try:
+        seeded = await _line_service(db).seed_inventory_numbers(request.numbers)
+    except PlivoProvisioningError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return SeedInventoryResponse(seeded=seeded)
+
+
+@app.post("/entitlements/claim", response_model=LineAllocationResponse)
+@limiter.limit(settings.registration_rate_limit)
+async def claim_entitlement(
+    request: Request,
+    payload: ClaimEntitlementRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        allocation = await _line_service(db).claim_and_allocate(
+            user_id,
+            product_id=payload.product_id,
+            purchase_token=payload.purchase_token,
+            stub_unlock=payload.stub_unlock,
+        )
+    except EntitlementError as error:
+        raise HTTPException(status_code=402, detail=str(error)) from error
+    except PlivoProvisioningError as error:
+        logger.exception("plivo provisioning failed for user_id=%s", user_id)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return LineAllocationResponse(
+        did=allocation.did,
+        sip=SipCredentialsPayload(
+            provider=allocation.sip.provider,
+            username=allocation.sip.username,
+            password=allocation.sip.password,
+            domain=allocation.sip.domain,
+            realm=allocation.sip.realm,
+        ),
+        status=allocation.status,
+        entitlement_source=allocation.entitlement_source,
+        product_id=allocation.product_id,
+    )
+
+
+@app.get("/devices/line", response_model=LineAllocationResponse)
+async def get_device_line(
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    allocation = await _line_service(db).get_line(user_id)
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="No line allocated")
+    return LineAllocationResponse(
+        did=allocation.did,
+        sip=SipCredentialsPayload(
+            provider=allocation.sip.provider,
+            username=allocation.sip.username,
+            password=allocation.sip.password,
+            domain=allocation.sip.domain,
+            realm=allocation.sip.realm,
+        ),
+        status=allocation.status,
+        entitlement_source=allocation.entitlement_source,
+        product_id=allocation.product_id,
+    )
+
+
 @app.get("/devices/sip-credentials", response_model=SipCredentialsResponse)
 async def get_sip_credentials(
     user_id: UUID = Depends(get_current_user_id),
@@ -590,6 +729,12 @@ async def get_sip_credentials(
     )
     credential = result.scalar_one_or_none()
     if credential is None:
+        entitlement = await _line_service(db).get_active_entitlement(user_id)
+        if entitlement is None:
+            raise HTTPException(
+                status_code=402,
+                detail="Line entitlement required before SIP credentials are issued",
+            )
         raise HTTPException(status_code=404, detail="No SIP credentials provisioned")
     return SipCredentialsResponse(
         provider=credential.provider,

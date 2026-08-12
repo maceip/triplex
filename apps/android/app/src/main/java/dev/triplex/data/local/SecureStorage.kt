@@ -80,6 +80,14 @@ class SecureStorage @Inject constructor(
         encryptedPrefs.edit().putString("plivo_sip_domain", domain.trim()).apply()
     }
 
+    fun getTriplexDid(): String? {
+        return encryptedPrefs.getString("triplex_did", null)?.takeIf { it.isNotBlank() }
+    }
+
+    fun setTriplexDid(did: String) {
+        encryptedPrefs.edit().putString("triplex_did", did.trim()).apply()
+    }
+
     fun getVoiceProfileRef(): String? {
         return encryptedPrefs.getString("voice_profile_ref", null)
     }

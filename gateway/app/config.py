@@ -29,10 +29,23 @@ class GatewaySettings(BaseSettings):
     plivo_auth_token: SecretStr = Field(min_length=1)
     public_base_url: AnyHttpUrl
     plivo_sip_domain: str
+    #: Plivo Application that already points answer/hangup at this gateway.
+    #: Required when buying or attaching numbers; optional so local/tests can
+    #: boot without provisioning.
+    plivo_application_id: str | None = None
+    plivo_number_country: str = Field(default="US", min_length=2, max_length=2)
+    plivo_number_type: str = Field(default="local", min_length=3, max_length=16)
     outbound_route_signing_key: SecretStr = Field(min_length=32)
     outbound_route_ttl_seconds: int = Field(ge=30, le=300)
     voice_service_url: AnyHttpUrl
     unavailable_message: str = Field(min_length=1, max_length=500)
+
+    #: Until Play Console products exist, claims can be accepted via stub
+    #: unlock / stub purchase tokens. Flip off once Google Play verify is wired.
+    entitlement_stub_mode: bool = True
+    entitlement_product_id: str = Field(default="triplex.line.v1", min_length=3)
+    entitlement_stub_secret: SecretStr | None = None
+    google_play_package_name: str = Field(default="dev.triplex", min_length=3)
 
     default_rate_limit: str = Field(min_length=3)
     registration_rate_limit: str = Field(min_length=3)
