@@ -34,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -49,6 +48,7 @@ import dev.triplex.dialer.DialerContact
 import dev.triplex.dialer.RecentCall
 import dev.triplex.dialer.RecentCallType
 import dev.triplex.ui.components.OutlinedTextInput
+import dev.triplex.ui.components.SproutAvatar
 import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
 import dev.triplex.ui.components.TriplexCardTone
@@ -62,6 +62,7 @@ import dev.triplex.ui.components.TriplexSetupBanner
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTray
 import dev.triplex.ui.components.TriplexTrayDivider
+import dev.triplex.ui.components.sproutSeed
 import dev.triplex.ui.theme.LocalTriplexWidthClass
 import dev.triplex.ui.theme.TriplexLayout
 import dev.triplex.ui.theme.TriplexWidthClass
@@ -78,9 +79,6 @@ import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaicons.tokens.User
 import zed.rainxch.rikkaicons.tokens.Users
 import zed.rainxch.rikkaicons.tokens.X
-import zed.rainxch.rikkaui.components.ui.avatar.Avatar
-import zed.rainxch.rikkaui.components.ui.avatar.AvatarAnimation
-import zed.rainxch.rikkaui.components.ui.avatar.AvatarSize
 import zed.rainxch.rikkaui.components.ui.call.CallDirection
 import zed.rainxch.rikkaui.components.ui.call.CallHistoryItem
 import zed.rainxch.rikkaui.components.ui.call.GlassDialpad
@@ -325,14 +323,14 @@ fun KeypadScreen(
                     onOpenAccountPicker = { accountPickerVisible = true },
                 )
 
-                // Directory shortcuts sit on the dock's shoulder as glass beads —
-                // same material as the pad keys, not tiny opaque Secondary FABs.
+                // Directory FABs float above the tab bar (content bottom-end),
+                // not on the dialpad and not mid-list next to Favorites.
                 if (!sidePane && openPanel == null) {
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 16.dp, bottom = dockHeight + 20.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                            .padding(end = 16.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
                         GlassIconButton(
@@ -344,7 +342,7 @@ fun KeypadScreen(
                             Icon(
                                 imageVector = RikkaIcons.Clock,
                                 contentDescription = null,
-                                size = IconSize.Default,
+                                size = IconSize.Lg,
                             )
                         }
                         GlassIconButton(
@@ -356,7 +354,7 @@ fun KeypadScreen(
                             Icon(
                                 imageVector = RikkaIcons.Users,
                                 contentDescription = null,
-                                size = IconSize.Default,
+                                size = IconSize.Lg,
                             )
                         }
                     }
@@ -773,6 +771,9 @@ private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
     val display = contact.name.ifBlank { contact.number }
     // No per-chip glass — the favorites strip tray is the surface.
     val interaction = remember { MutableInteractionSource() }
+    val seed = remember(contact.id, contact.number, display) {
+        sproutSeed(contact.id, contact.number, display)
+    }
     Column(
         modifier = Modifier
             .width(FavoriteChipWidth)
@@ -786,14 +787,11 @@ private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Avatar(
-            fallback = initialsOf(display),
-            size = AvatarSize.Lg,
-            animation = AvatarAnimation.None,
+        SproutAvatar(
+            seed = seed,
+            size = 64.dp,
             label = "Call $display",
-            // muted is near-black in dark themes and punches holes in the tray;
-            // a light wash keeps initials readable without a solid disc.
-            containerColor = Color.White.copy(alpha = 0.16f),
+            animation = "medium",
         )
         Text(
             text = display,
@@ -806,15 +804,6 @@ private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
 }
 
 private val FavoriteChipWidth = 96.dp
-
-/** Up to two initials for the avatar; falls back to the first character. */
-private fun initialsOf(display: String): String =
-    display.split(' ')
-        .filter { it.isNotBlank() }
-        .take(2)
-        .map { it.first().uppercaseChar() }
-        .joinToString("")
-        .ifBlank { display.take(1).uppercase() }
 
 /**
  * The permanent dialer, docked at the bottom of the screen.
@@ -867,108 +856,100 @@ private fun DialDock(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.md),
         ) {
-            dialMatches.take(DockMatchLimit).forEach { match ->
-                TriplexListRow(
-                    title = match.title,
-                    subtitle = match.subtitle,
-                    actionIcon = RikkaIcons.Phone,
-                    actionContentDescription = "Call ${match.title}",
-                    onAction = { onIntent(KeypadIntent.PlaceCall(match.number)) },
-                    // Dock GlassPanel is already the tray.
-                    embedded = true,
-                )
-            }
-
-            TriplexDialDisplay(
-                value = dialString,
-                onValueChange = { onIntent(KeypadIntent.SetDialString(it)) },
-                onPaste = onPaste,
-            )
-
-            // The design system's own pad, not a local reimplementation: round
-            // glass keys with a specular highlight, a gradient rim, shadowed
-            // white glyphs and press physics. The long-press `+` on 0 is part of
-            // its default key set, so it needs no wiring here.
-            // Prominent, not the default Subtle: the keys sit one level deep
-            // inside the panel, and `rememberGlassStyle` steps the level down
-            // once per nesting level — so Prominent here is what actually lands
-            // on Regular tokens (12dp blur, 26dp refraction) at the key itself.
-            GlassDialpad(
-                onKeyPress = onKeyPress,
-                level = GlassLevel.Prominent,
-            )
-
-            // One primary action, flanked rather than matched: Call is the
-            // design system's Large FAB — a 72dp circle — and voicemail and
-            // backspace are the same round glass the dial keys are made of, so
-            // the row reads as a fourth rank of the pad rather than as a
-            // separate toolbar. Three equal ghost buttons spread across the row
-            // is what made the old dialer read as a settings screen; two dark
-            // rounded squares beside a circle read as an accident.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(
-                    RikkaTheme.spacing.xl,
-                    Alignment.CenterHorizontally,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                GlassIconButton(
-                    onClick = { onIntent(KeypadIntent.CallVoicemail) },
-                    size = DockSecondaryKeySize,
-                    // Matches the keys: Prominent here is what survives the
-                    // one-level step-down inside the panel and lands on Regular.
-                    level = GlassLevel.Prominent,
-                    label = "Call voicemail",
-                ) {
-                    Icon(imageVector = RikkaIcons.Mail, contentDescription = null, size = IconSize.Lg)
+                dialMatches.take(DockMatchLimit).forEach { match ->
+                    TriplexListRow(
+                        title = match.title,
+                        subtitle = match.subtitle,
+                        actionIcon = RikkaIcons.Phone,
+                        actionContentDescription = "Call ${match.title}",
+                        onAction = { onIntent(KeypadIntent.PlaceCall(match.number)) },
+                        // Dock GlassPanel is already the tray.
+                        embedded = true,
+                    )
                 }
-                Fab(
-                    icon = RikkaIcons.Phone,
-                    label = "Call",
-                    onClick = { onIntent(KeypadIntent.PlaceCall(dialString)) },
-                    size = FabSize.Large,
-                    enabled = canPlaceCall,
-                    shape = RikkaTheme.shapes.full,
+
+                TriplexDialDisplay(
+                    value = dialString,
+                    onValueChange = { onIntent(KeypadIntent.SetDialString(it)) },
+                    onPaste = onPaste,
                 )
-                GlassIconButton(
-                    onClick = { onIntent(KeypadIntent.DeleteDigit) },
-                    enabled = dialString.isNotEmpty(),
-                    size = DockSecondaryKeySize,
+
+                GlassDialpad(
+                    onKeyPress = onKeyPress,
                     level = GlassLevel.Prominent,
-                    // `X` renders as a filled tile in the Phosphor Fill weight,
-                    // which reads as a blob at this size; the eraser is both
-                    // clearer and a truer name for what the key does.
-                    label = "Delete the last digit",
-                ) {
-                    Icon(imageVector = RikkaIcons.Eraser, contentDescription = null, size = IconSize.Lg)
-                }
-            }
+                )
 
-            if (accounts.size > 1) {
-                val active = accounts.firstOrNull { it.id == selectedAccountId }
-                TriplexButton(
-                    text = active?.label ?: "Choose a SIM",
-                    onClick = onOpenAccountPicker,
-                    style = TriplexButtonStyle.GHOST,
-                    leadingIcon = RikkaIcons.ChevronDown,
+                // One primary action, flanked rather than matched: Call is the
+                // design system's Large FAB — a 72dp circle — and voicemail and
+                // backspace are the same round glass the dial keys are made of, so
+                // the row reads as a fourth rank of the pad rather than as a
+                // separate toolbar. Three equal ghost buttons spread across the row
+                // is what made the old dialer read as a settings screen; two dark
+                // rounded squares beside a circle read as an accident.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(
+                        RikkaTheme.spacing.xl,
+                        Alignment.CenterHorizontally,
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassIconButton(
+                        onClick = { onIntent(KeypadIntent.CallVoicemail) },
+                        size = DockSecondaryKeySize,
+                        // Matches the keys: Prominent here is what survives the
+                        // one-level step-down inside the panel and lands on Regular.
+                        level = GlassLevel.Prominent,
+                        label = "Call voicemail",
+                    ) {
+                        Icon(imageVector = RikkaIcons.Mail, contentDescription = null, size = IconSize.Lg)
+                    }
+                    Fab(
+                        icon = RikkaIcons.Phone,
+                        label = "Call",
+                        onClick = { onIntent(KeypadIntent.PlaceCall(dialString)) },
+                        size = FabSize.Large,
+                        enabled = canPlaceCall,
+                        shape = RikkaTheme.shapes.full,
+                    )
+                    GlassIconButton(
+                        onClick = { onIntent(KeypadIntent.DeleteDigit) },
+                        enabled = dialString.isNotEmpty(),
+                        size = DockSecondaryKeySize,
+                        level = GlassLevel.Prominent,
+                        // `X` renders as a filled tile in the Phosphor Fill weight,
+                        // which reads as a blob at this size; the eraser is both
+                        // clearer and a truer name for what the key does.
+                        label = "Delete the last digit",
+                    ) {
+                        Icon(imageVector = RikkaIcons.Eraser, contentDescription = null, size = IconSize.Lg)
+                    }
+                }
+
+                if (accounts.size > 1) {
+                    val active = accounts.firstOrNull { it.id == selectedAccountId }
+                    TriplexButton(
+                        text = active?.label ?: "Choose a SIM",
+                        onClick = onOpenAccountPicker,
+                        style = TriplexButtonStyle.GHOST,
+                        leadingIcon = RikkaIcons.ChevronDown,
+                    )
+                }
+
+                Text(
+                    text = "Hold 0 for +",
+                    variant = TextVariant.Small,
+                    color = RikkaTheme.colors.onMuted,
                 )
             }
-
-            Text(
-                text = "Hold 0 for +",
-                variant = TextVariant.Small,
-                color = RikkaTheme.colors.onMuted,
-            )
         }
-    }
 }
 
 /** Diameter of the voicemail and backspace keys flanking the Call button. */
 private val DockSecondaryKeySize = 56.dp
 
-/** Directory shortcuts above the dock — glass beads, not mini opaque FABs. */
-private val DirectoryFabSize = 52.dp
+/** Directory shortcuts floating above the tab bar — large enough to hit. */
+private val DirectoryFabSize = 64.dp
 
 /** Smart dial in the dock is a hint, not a browser — the keys keep their room. */
 private const val DockMatchLimit = 2

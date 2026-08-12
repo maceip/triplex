@@ -1,0 +1,25 @@
+[package]
+name = "triplex-sprouts"
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+publish = false
+description = "DiceBear sprouts avatars for Triplex (on-device, deterministic seed)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "triplex_sprouts"
+
+[dependencies]
+dicebear-core = "10.5.0"
+dicebear-styles = { version = "10.4.0", features = ["sprouts"] }
+serde_json = "1"
+jni = "=0.21.1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

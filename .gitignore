@@ -51,3 +51,6 @@ testlab/litert-aot/tf_out/
 testlab/litert-aot/tmp/
 testlab/litert-aot/verify/
 **/.gradle/
+
+# Rust sprouts crate build output (staged .so lives in jniLibs)
+apps/android/sprouts/target/
