@@ -123,9 +123,10 @@ class IncomingCallViewModelTest {
             textReply.reason,
         )
 
-        val toAgent = state.action(IncomingCallActionId.SEND_TO_AGENT)!!
-        assertFalse(toAgent.enabled)
-        assertNotNull(toAgent.reason)
+        // Nothing on this call can turn the hand-off on — it needs carrier
+        // deflection and an agent number, neither settable while it rings — so
+        // the control is not drawn at all rather than drawn dead.
+        assertNull(state.action(IncomingCallActionId.SEND_TO_AGENT))
 
         // Answering a SIM call is the one thing the platform always allows.
         assertTrue(state.action(IncomingCallActionId.ANSWER)!!.enabled)
@@ -133,7 +134,7 @@ class IncomingCallViewModelTest {
     }
 
     @Test
-    fun `a carrier that supports deflection enables the control instead of hiding it`() {
+    fun `a carrier that supports deflection is the only one offered the hand-off`() {
         val session = telecomRingingCall(
             capabilities = telecomCapabilities().copy(
                 canTextReply = true,
@@ -145,7 +146,23 @@ class IncomingCallViewModelTest {
 
         assertTrue(state.action(IncomingCallActionId.TEXT_REPLY)!!.enabled)
         assertNull(state.action(IncomingCallActionId.TEXT_REPLY)!!.reason)
-        assertTrue(state.action(IncomingCallActionId.SEND_TO_AGENT)!!.enabled)
+
+        val toAgent = state.action(IncomingCallActionId.SEND_TO_AGENT)!!
+        assertTrue(toAgent.enabled)
+        assertNull(toAgent.reason)
+    }
+
+    @Test
+    fun `a SIM call is offered no automations because none could speak on it`() {
+        val state = incomingCallUiState(
+            telecomRingingCall(),
+            AgentInboundConfig(
+                enabledAutomationIds = setOf(AutomationCatalog.BookZoomMeeting.id),
+            ),
+        )
+
+        // The automation would have to talk on a leg Triplex holds no media for.
+        assertEquals(emptyList<IncomingAutomationOption>(), state.automations)
     }
 
     @Test
@@ -248,11 +265,13 @@ class IncomingCallViewModelTest {
     }
 
     @Test
-    fun `a disabled control dispatches nothing`() = runTest {
+    fun `a control that is disabled or absent dispatches nothing`() = runTest {
         calls.emitSessions(telecomRingingCall())
         val viewModel = collectedViewModel()
 
+        // Disabled and explained.
         viewModel.onAction(IncomingCallActionId.TEXT_REPLY)
+        // Removed from the sheet entirely; asking for it by id is still refused.
         viewModel.onAction(IncomingCallActionId.SEND_TO_AGENT)
 
         assertEquals(emptyList<Pair<CallIntent, String?>>(), calls.dispatched)

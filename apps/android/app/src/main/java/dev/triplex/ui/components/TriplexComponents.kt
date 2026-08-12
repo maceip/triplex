@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,9 +41,13 @@ import zed.rainxch.rikkaui.components.ui.button.ButtonVariant
 import zed.rainxch.rikkaui.components.ui.button.IconButton
 import zed.rainxch.rikkaui.components.ui.button.IconButtonSize
 import zed.rainxch.rikkaui.components.ui.glass.GlassCard
+import zed.rainxch.rikkaui.components.ui.glass.GlassCapability
 import zed.rainxch.rikkaui.components.ui.glass.GlassContainer
 import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
 import zed.rainxch.rikkaui.components.ui.glass.GlassScenery
+import zed.rainxch.rikkaui.components.ui.glass.LocalGlassLensPolicy
+import zed.rainxch.rikkaui.components.ui.glass.rememberGlassCapability
+import zed.rainxch.rikkaui.components.ui.glass.rememberGlassLensPolicy
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
 import zed.rainxch.rikkaui.components.ui.text.Text
@@ -79,20 +84,47 @@ enum class TriplexCardTone {
  * no longer call it themselves: the nav bar and the screen underneath have to
  * refract the *same* layer, and a per-screen backdrop would leave the chrome
  * with nothing to sample.
+ *
+ * Idle capability is Blur (painted bevels + dome, no live AGSL lenses). Pressing
+ * glass promotes Full for a short hold via [rememberGlassLensPolicy], then
+ * demotes — lenses when you look, quiet when you don't. Call / demo surfaces can
+ * still force sustained Full with [glassCapability].
  */
 @Composable
 fun TriplexBackground(
     modifier: Modifier = Modifier,
+    /** Journey/demo surfaces may opt into lobe drift; shell stays static. */
+    animateScenery: Boolean = false,
+    /**
+     * Ceiling for glass. Null (default) uses [rememberGlassCapability] under a
+     * [rememberGlassLensPolicy] so idle stays Blur and presses briefly promote
+     * Full. Pass an explicit tier to lock the scene (e.g. Full for cinematic).
+     */
+    glassCapability: GlassCapability? = null,
     content: @Composable () -> Unit
 ) {
     // Scenery is installed by LiquidGlassTheme via RikkaTheme(scenery = …);
     // reading it here keeps the shell and every glass surface on the same scene.
     val scenery = RikkaTheme.scenery
+    val ceiling = glassCapability ?: rememberGlassCapability()
+    val lensPolicy = rememberGlassLensPolicy(ceiling = ceiling)
+    val effective = glassCapability ?: lensPolicy.effective
+
     GlassContainer(
         modifier = modifier.fillMaxSize(),
-        background = { GlassScenery(scenery = scenery) },
+        capability = effective,
+        background = {
+            GlassScenery(
+                scenery = scenery,
+                // Default off: Full-tier glass + drifting scenery was keeping
+                // the UI compositor busy (~100% CPU idle on Keypad).
+                animated = animateScenery,
+            )
+        },
     ) {
-        content()
+        CompositionLocalProvider(LocalGlassLensPolicy provides lensPolicy) {
+            content()
+        }
     }
 }
 
@@ -272,7 +304,7 @@ fun TriplexCard(
  * container that needs its own contrasting foreground.
  */
 @Composable
-private fun TriplexCardTone.glassTint(): Color = when (this) {
+internal fun TriplexCardTone.glassTint(): Color = when (this) {
     TriplexCardTone.DEFAULT -> RikkaTheme.glass.tint
     TriplexCardTone.ACCENT -> RikkaTheme.colors.primary
     TriplexCardTone.SUCCESS -> RikkaTheme.colors.success

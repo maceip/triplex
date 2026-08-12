@@ -46,6 +46,10 @@ fun triplexScenery(isDark: Boolean): RikkaScenery =
                 ),
             grainAlpha = 0.055f,
             vignetteAlpha = 0.32f,
+            // Idle heat: perpetual lobe drift invalidates every glass sampler
+            // (dialpad keys, nav chrome). Motion is reserved for demo/journey
+            // surfaces that opt in with a non-zero copy.
+            driftFraction = 0f,
         )
     } else {
         RikkaScenery(
@@ -62,5 +66,6 @@ fun triplexScenery(isDark: Boolean): RikkaScenery =
                 ),
             grainAlpha = 0.04f,
             vignetteAlpha = 0.16f,
+            driftFraction = 0f,
         )
     }

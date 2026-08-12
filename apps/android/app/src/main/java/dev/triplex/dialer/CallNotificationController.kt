@@ -115,7 +115,13 @@ class CallNotificationController @Inject constructor(
                 )
             )
             .apply {
-                if (session.capabilities.canDeflectToAgent || session.capabilities.agentHasMedia) {
+                // Gated on the hand-off capability alone, not on agentHasMedia.
+                // A notification action carries no automation id — there is no
+                // picker in a notification — and a leg that can only be handed
+                // to a *named* automation answers an id-less hand-off with
+                // "Automation could not start on this call". Offering the button
+                // there means offering a failure from the lock screen.
+                if (session.capabilities.canDeflectToAgent) {
                     addAction(
                         android.R.drawable.ic_menu_send,
                         "Agent",

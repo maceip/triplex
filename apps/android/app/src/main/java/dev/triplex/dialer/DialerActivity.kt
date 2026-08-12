@@ -313,6 +313,7 @@ private fun TriplexDialerScreen(
         KeypadScreen(
             initialNumber = initialNumber,
             callInBackground = session != null,
+            callOnHold = session?.phase == CallPhase.HOLDING,
             retryNumber = retryNumber,
             onRetryConsumed = onRetryConsumed,
             onReturnToCall = { addingCall = false },

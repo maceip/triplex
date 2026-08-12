@@ -26,6 +26,7 @@ import dev.triplex.ui.call.shared.CallActionId
 import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import kotlinx.coroutines.delay
 import zed.rainxch.rikkaui.components.ui.call.CallHeader
 import zed.rainxch.rikkaui.components.ui.call.GlassDialpad
@@ -89,9 +90,13 @@ fun InCallScreen(
     var showKeypad by rememberSaveable(state.sessionId) { mutableStateOf(false) }
 
     Column(
+        // Capped after the scroll modifier, so the gesture still spans the whole
+        // window while the controls stay a reachable column: a call action grid
+        // stretched across an unfolded screen puts Mute and Hang up a hand apart.
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .triplexContentWidth()
             .padding(horizontal = TriplexLayout.screenHorizontal, vertical = spacing.lg),
         verticalArrangement = Arrangement.spacedBy(spacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,

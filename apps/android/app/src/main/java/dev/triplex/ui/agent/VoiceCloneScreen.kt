@@ -66,6 +66,7 @@ import dev.triplex.ui.components.TriplexReveal
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import java.util.Locale
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.Mic
@@ -87,6 +88,7 @@ import zed.rainxch.rikkaui.foundation.RikkaTheme
 @Composable
 fun VoiceCloneScreen(
     onBack: () -> Unit,
+    onOpenVoiceLab: (() -> Unit)? = null,
     viewModel: VoiceCloneViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -106,6 +108,7 @@ fun VoiceCloneScreen(
         state = state,
         meter = meter,
         onBack = onBack,
+        onOpenVoiceLab = onOpenVoiceLab,
         onStartCapture = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
         onFinishCapture = viewModel::stopRecording,
         onDiscardCapture = viewModel::discardRecording,
@@ -127,7 +130,8 @@ internal fun VoiceCloneContent(
     onUpdatePreviewText: (String) -> Unit,
     onSpeakPreview: () -> Unit,
     onPlayReference: () -> Unit,
-    onRevoke: () -> Unit
+    onRevoke: () -> Unit,
+    onOpenVoiceLab: (() -> Unit)? = null,
 ) {
     var leaveAfterDiscard by remember { mutableStateOf(false) }
     val motion = RikkaTheme.motion
@@ -201,7 +205,8 @@ internal fun VoiceCloneContent(
                     onUpdatePreviewText = onUpdatePreviewText,
                     onSpeakPreview = onSpeakPreview,
                     onPlayReference = onPlayReference,
-                    onRevoke = onRevoke
+                    onRevoke = onRevoke,
+                    onOpenVoiceLab = onOpenVoiceLab,
                 )
             }
         }
@@ -324,6 +329,7 @@ private fun VoiceEnrollmentExperience(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(scrollState)
+                    .triplexContentWidth()
                     .padding(horizontal = TriplexLayout.screenHorizontal)
                     .padding(top = spacing.md, bottom = 168.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -836,7 +842,8 @@ private fun VoiceReadyExperience(
     onUpdatePreviewText: (String) -> Unit,
     onSpeakPreview: () -> Unit,
     onPlayReference: () -> Unit,
-    onRevoke: () -> Unit
+    onRevoke: () -> Unit,
+    onOpenVoiceLab: (() -> Unit)? = null,
 ) {
     val spacing = RikkaTheme.spacing
     val motion = RikkaTheme.motion
@@ -852,6 +859,7 @@ private fun VoiceReadyExperience(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .triplexContentWidth()
                 .padding(horizontal = TriplexLayout.screenHorizontal)
                 .padding(top = spacing.md, bottom = spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -979,6 +987,15 @@ private fun VoiceReadyExperience(
 
             Separator(color = RikkaTheme.colors.border)
 
+            onOpenVoiceLab?.let { openLab ->
+                TriplexButton(
+                    text = "Practice in voice lab",
+                    onClick = openLab,
+                    style = TriplexButtonStyle.SECONDARY,
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             TriplexButton(
                 text = "Record a new sample",
                 onClick = onStartCapture,

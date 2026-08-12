@@ -122,6 +122,8 @@ data class TelecomCallSnapshot(
     val canHold: Boolean = false,
     val canRespondViaText: Boolean = false,
     val canDeflectToAgent: Boolean = false,
+    /** Whether an agent number exists to dial as a second leg and conference in. */
+    val canConferenceAgent: Boolean = false,
     val connectedAtMs: Long? = null,
     val otherCallCount: Int = 0,
     val canMerge: Boolean = false,

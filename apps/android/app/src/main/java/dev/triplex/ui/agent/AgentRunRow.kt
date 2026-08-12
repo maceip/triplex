@@ -22,6 +22,7 @@ fun AgentRunRow(
     run: AgentRun,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
 ) {
     CallHistoryItem(
         name = run.counterpartName,
@@ -31,6 +32,7 @@ fun AgentRunRow(
         direction = run.toCallDirection(),
         badge = run.outcomeLabel(),
         onClick = onClick,
+        embedded = embedded,
     )
 }
 

@@ -88,6 +88,14 @@ class SecureStorage @Inject constructor(
         encryptedPrefs.edit().putString("voice_profile_ref", ref).apply()
     }
 
+    /** User attested that SIM conditional forward points at the Triplex line. */
+    fun isRoutingAttested(): Boolean =
+        encryptedPrefs.getBoolean("routing_attested", false)
+
+    fun setRoutingAttested(attested: Boolean) {
+        encryptedPrefs.edit().putBoolean("routing_attested", attested).apply()
+    }
+
     fun clearAll() {
         encryptedPrefs.edit().clear().apply()
         _deviceToken.value = null

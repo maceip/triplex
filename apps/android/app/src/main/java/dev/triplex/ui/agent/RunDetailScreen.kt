@@ -16,6 +16,7 @@ import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
@@ -54,7 +55,8 @@ fun RunDetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding()),
+                .padding(top = padding.calculateTopPadding())
+                .triplexContentWidth(),
             verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             val current = run

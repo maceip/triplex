@@ -191,6 +191,11 @@ class TriplexInCallService : InCallService(), TelecomCallController {
             canRespondViaText = details.can(Call.Details.CAPABILITY_RESPOND_VIA_TEXT),
             canDeflectToAgent = BuildConfig.AGENT_TRANSFER_NUMBER.isNotBlank() &&
                 details.can(Call.Details.CAPABILITY_SUPPORT_DEFLECT),
+            // Conferencing needs no carrier capability up front — it is an
+            // ordinary second call — so the only precondition is having a number
+            // to dial. `conferenceInAgent` reports what the carrier does with the
+            // merge afterwards.
+            canConferenceAgent = BuildConfig.AGENT_TRANSFER_NUMBER.isNotBlank(),
             connectedAtMs = details.connectTimeMillis.takeIf { it > 0L },
             otherCallCount = (calls.size - 1).coerceAtLeast(0),
             canMerge = call.conferenceableCalls.isNotEmpty() ||

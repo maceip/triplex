@@ -29,6 +29,7 @@ import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexToggleRow
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
@@ -67,7 +68,8 @@ fun InboundSetupScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding()),
+                .padding(top = padding.calculateTopPadding())
+                .triplexContentWidth(),
             contentPadding = PaddingValues(
                 start = TriplexLayout.screenHorizontal,
                 end = TriplexLayout.screenHorizontal,
@@ -295,14 +297,8 @@ private fun RoutingExplainerCard() {
             )
             Text(
                 text = "The agent works on the Triplex line, which carries its own audio. " +
-                    "Two ways to get calls there:",
-            )
-            Text(
-                text = "1. Give out your Triplex number. Calls to it reach the agent directly.\n" +
-                    "2. Forward your SIM number to it. In your phone's call-settings menu, " +
-                    "set conditional forwarding — when busy, unanswered, or unreachable — to " +
-                    "your Triplex number. Your SIM rings first; anything you do not pick up " +
-                    "lands on the agent.",
+                    "Give out your Triplex number, or open SIM call forwarding to set " +
+                    "conditional forward from the Agent tab.",
             )
             Text(
                 text = "Forwarding is a carrier feature and may be billed as a call.",

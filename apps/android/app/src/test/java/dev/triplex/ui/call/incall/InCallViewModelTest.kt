@@ -152,9 +152,9 @@ class InCallViewModelTest {
         assertTrue(handOff.enabled)
         assertNull(handOff.reason)
 
-        val takeBack = agent.action(AgentActionId.TAKE_BACK)!!
-        assertFalse(takeBack.enabled)
-        assertTrue(takeBack.reason!!.contains("carrier's side"))
+        // The carrier owns this leg once it has been handed over, so there is no
+        // recall to offer and no control pretending otherwise.
+        assertNull(agent.action(AgentActionId.TAKE_BACK))
     }
 
     @Test
@@ -167,8 +167,27 @@ class InCallViewModelTest {
             .agent
             .action(AgentActionId.HAND_OFF)!!
 
+        // A passing condition, not a missing feature: the agent number is there,
+        // this call just cannot hold a second line at the moment.
         assertFalse(handOff.enabled)
         assertEquals("This call cannot take a second line right now.", handOff.reason)
+    }
+
+    @Test
+    fun `a build with no agent number does not offer to add Triplex to a call`() {
+        val session = telecomActiveCall(
+            capabilities = telecomCapabilities().copy(canConferenceAgent = false),
+        )
+
+        val agent = inCallUiState(session, AgentInboundConfig()).agent
+
+        // There is no second leg to place, so there is nothing to draw. The
+        // panel still says Triplex is not on this call.
+        assertNull(agent.action(AgentActionId.HAND_OFF))
+        assertEquals(
+            "Triplex is not on this call — your carrier owns its audio",
+            agent.status,
+        )
     }
 
     @Test
@@ -198,27 +217,25 @@ class InCallViewModelTest {
     @Test
     fun `handing a live SIP call over needs an automation switched on first`() {
         // The catalog ships enabled, so switching everything off is the only way
-        // into this state — and it has to explain itself rather than just sit dead.
+        // into this state — and with nothing to hand the call to, there is no
+        // control. "Hand to an automation" over an empty picker is a promise the
+        // call cannot keep.
         val without = inCallUiState(
             sipActiveCall(),
             AgentInboundConfig(enabledAutomationIds = emptySet()),
-        )
-            .agent
-            .action(AgentActionId.HAND_OFF)!!
+        ).agent
 
-        assertEquals("Hand to an automation", without.label)
-        assertFalse(without.enabled)
-        assertEquals(
-            "Turn on an automation in Triplex settings before handing a call to it.",
-            without.reason,
-        )
+        assertNull(without.action(AgentActionId.HAND_OFF))
+        assertEquals(emptyList<AgentAutomationOption>(), without.automations)
 
         val state = inCallUiState(
             sipActiveCall(),
             AgentInboundConfig(enabledAutomationIds = setOf(AutomationCatalog.BookZoomMeeting.id)),
         )
 
-        assertTrue(state.agent.action(AgentActionId.HAND_OFF)!!.enabled)
+        val handOff = state.agent.action(AgentActionId.HAND_OFF)!!
+        assertEquals("Hand to an automation", handOff.label)
+        assertTrue(handOff.enabled)
         assertEquals(
             listOf(AutomationCatalog.BookZoomMeeting.id),
             state.agent.automations.map { it.id },
@@ -370,6 +387,8 @@ class InCallViewModelTest {
         canMute = true,
         canSendDtmf = true,
         canAddCall = true,
+        // This build has an agent number, so the conference hand-off exists.
+        canConferenceAgent = true,
         agentHasMedia = false,
         audioEndpoints = listOf(
             AudioEndpointUi(id = "earpiece", name = "Phone", selected = true),

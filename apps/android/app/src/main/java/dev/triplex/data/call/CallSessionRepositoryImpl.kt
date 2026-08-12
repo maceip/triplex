@@ -216,6 +216,7 @@ class CallSessionRepositoryImpl(
                 canMerge = canMerge,
                 canSwap = canSwap,
                 canDeflectToAgent = canDeflectToAgent,
+                canConferenceAgent = canConferenceAgent,
                 agentHasMedia = false,
                 audioEndpoints = audioEndpoints,
             ),

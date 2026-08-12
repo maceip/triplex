@@ -48,6 +48,18 @@ sealed interface ShellRoute {
     @Serializable
     data object AgentVoice : ShellRoute
 
+    /** `agent/voice-lab` — on-device mic/TTS practice without Plivo. */
+    @Serializable
+    data object AgentVoiceLab : ShellRoute
+
+    /** `agent/call-forward` — SIM conditional CF wizard toward Triplex DID. */
+    @Serializable
+    data object AgentCallForward : ShellRoute
+
+    /** `agent/demo` — cinematic trailer + handoff into real setup. */
+    @Serializable
+    data object AgentDemo : ShellRoute
+
     /**
      * `agent/run/{runId}` — the recorded transcript of a single agent call.
      *

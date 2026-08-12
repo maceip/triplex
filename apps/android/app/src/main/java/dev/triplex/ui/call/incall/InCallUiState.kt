@@ -80,10 +80,14 @@ enum class AgentActionId {
 }
 
 /**
- * An agent control plus, when it cannot run, the sentence that says why.
+ * An agent control plus, when it cannot run *yet*, the sentence that says why.
  *
- * Never removed, only disabled — same rule the incoming sheet follows
- * (reskin.md §3.3, §5).
+ * The distinction is the same one the incoming sheet draws (reskin.md §3.3, §5).
+ * A hand-off blocked by something about this moment — a call that cannot take a
+ * second line right now — is disabled and explains itself, because it will work
+ * on the next call and the user should know it is there. A hand-off that is
+ * impossible on this call's stack, with nothing the user could do about it, is
+ * left out of [AgentPanelState.actions] altogether.
  */
 data class AgentAction(
     val id: AgentActionId,
@@ -222,44 +226,47 @@ private fun buildAgentActions(
     val capabilities = session.capabilities
     val sip = session.stack == CallStack.SIP
 
-    val handOff = if (sip) {
+    val handOff = when {
         // The SIP hand-off is a hand-off *to an automation*: the engine needs an
         // id to look a template up, and one without it stops at "Automation
-        // could not start on this call". So the precondition is that the user
-        // has switched at least one automation on.
-        AgentAction(
-            id = AgentActionId.HAND_OFF,
-            label = "Hand to an automation",
-            enabled = capabilities.agentHasMedia && automations.isNotEmpty(),
-            reason = when {
-                !capabilities.agentHasMedia -> "Triplex is not on this call's audio."
-                automations.isEmpty() ->
-                    "Turn on an automation in Triplex settings before handing a call to it."
+        // could not start on this call". With no automation switched on there is
+        // nothing to hand the call to, so the control is not drawn — an enabled
+        // picker with an empty list and a disabled button labelled "Hand to an
+        // automation" both promise a hand-off this call cannot perform.
+        sip -> if (capabilities.agentHasMedia && automations.isNotEmpty()) {
+            AgentAction(
+                id = AgentActionId.HAND_OFF,
+                label = "Hand to an automation",
+                enabled = true,
+            )
+        } else {
+            null
+        }
 
-                else -> null
-            },
-        )
-    } else if (session.phase == CallPhase.RINGING) {
         // Not reachable from this surface today — the shell routes a ringing
         // call to the sheet — but the projection stays total so the surface
-        // cannot silently mis-describe a call it is handed.
-        AgentAction(
-            id = AgentActionId.HAND_OFF,
-            label = "Send to Triplex",
-            enabled = capabilities.canDeflectToAgent,
-            reason = if (capabilities.canDeflectToAgent) {
-                null
-            } else {
-                "Sending a SIM call to Triplex needs carrier deflection and an " +
-                    "agent number set up on this device."
-            },
-        )
-    } else {
+        // cannot silently mis-describe a call it is handed. Same rule as the
+        // sheet's own SEND_TO_AGENT: offered only when deflection is available.
+        session.phase == CallPhase.RINGING -> if (capabilities.canDeflectToAgent) {
+            AgentAction(
+                id = AgentActionId.HAND_OFF,
+                label = "Send to Triplex",
+                enabled = true,
+            )
+        } else {
+            null
+        }
+
         // Deflection is ringing-only, so a connected SIM call is handed over by
-        // dialling Triplex as a second leg and conferencing it in. What that
-        // needs is the ability to place that second leg; whether the carrier
-        // then allows the merge is reported on the call, not guessed here.
-        AgentAction(
+        // dialling Triplex as a second leg and conferencing it in. Two different
+        // preconditions, and they fail differently. No agent number configured
+        // means this build can never do it, so the control is absent. A call
+        // that cannot take a second line right now is a passing condition — hold
+        // the call, or wait for the conference to clear — so that one is drawn
+        // disabled with the sentence that says so.
+        !capabilities.canConferenceAgent -> null
+
+        else -> AgentAction(
             id = AgentActionId.HAND_OFF,
             label = "Add Triplex to this call",
             enabled = capabilities.canAddCall,
@@ -271,19 +278,21 @@ private fun buildAgentActions(
         )
     }
 
-    val takeBack = AgentAction(
-        id = AgentActionId.TAKE_BACK,
-        label = "Take the call back",
-        enabled = capabilities.agentHasMedia,
-        reason = if (capabilities.agentHasMedia) {
-            null
-        } else {
-            "A SIM call handed to Triplex runs on your carrier's side of the " +
-                "line, so this phone cannot pull it back."
-        },
-    )
+    // Taking a call back means interrupting the agent mid-sentence, which is
+    // only meaningful where the agent has a voice on the call. A SIM leg handed
+    // to Triplex runs on the carrier's side of the line and this phone has no
+    // recall to offer, so there is no control rather than a dead one.
+    val takeBack = if (capabilities.agentHasMedia) {
+        AgentAction(
+            id = AgentActionId.TAKE_BACK,
+            label = "Take the call back",
+            enabled = true,
+        )
+    } else {
+        null
+    }
 
-    return listOf(handOff, takeBack)
+    return listOfNotNull(handOff, takeBack)
 }
 
 /**

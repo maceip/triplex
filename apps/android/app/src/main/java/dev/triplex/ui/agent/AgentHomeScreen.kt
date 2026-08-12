@@ -1,11 +1,5 @@
 package dev.triplex.ui.agent
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -28,19 +21,23 @@ import dev.triplex.domain.model.TaskDefinition
 import dev.triplex.telephony.sip.TelephonyController.SipState
 import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
-import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
-import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.components.TriplexTopBarAction
+import dev.triplex.ui.components.TriplexTray
+import dev.triplex.ui.components.TriplexTrayDivider
+import dev.triplex.ui.components.TriplexTrayHeader
+import dev.triplex.ui.components.TriplexTrayNavRow
+import dev.triplex.ui.components.TriplexTrayRow
 import dev.triplex.ui.theme.TriplexLayout
-import zed.rainxch.rikkaicons.tokens.Phone
-import zed.rainxch.rikkaicons.tokens.RikkaIcons
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaui.components.ui.call.VoiceOrb
 import zed.rainxch.rikkaui.components.ui.call.VoiceOrbState
+import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
 import zed.rainxch.rikkaui.components.ui.icon.Icon
 import zed.rainxch.rikkaui.components.ui.icon.IconSize
+import zed.rainxch.rikkaui.components.ui.icon.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.scaffold.Scaffold
 import zed.rainxch.rikkaui.components.ui.spinner.Spinner
 import zed.rainxch.rikkaui.components.ui.text.Text
@@ -50,15 +47,18 @@ import zed.rainxch.rikkaui.foundation.RikkaTheme
 /**
  * Agent home (reskin.md §3.2).
  *
- * Answers, in order: can the agent take a call right now, what is it doing, and
- * what did it do. Setup lives one tap away on the inbound/outbound screens
- * rather than inline, so this stays a status surface.
+ * Two glass trays, not a stack of cards: a status tray (readiness + actions +
+ * setup) and an activity tray (handled calls). Each tray is one backdrop
+ * sampler — the same metaphor as the dialpad's single-surface pad below Full.
  */
 @Composable
 fun AgentHomeScreen(
     onOpenInbound: () -> Unit,
     onOpenOutbound: () -> Unit,
     onOpenVoice: () -> Unit,
+    onOpenVoiceLab: () -> Unit,
+    onOpenCallForward: () -> Unit,
+    onOpenDemo: () -> Unit,
     onOpenRun: (String) -> Unit,
     viewModel: AgentHomeViewModel = hiltViewModel(),
 ) {
@@ -66,7 +66,6 @@ fun AgentHomeScreen(
     val sipState by viewModel.sipState.collectAsState()
     val runs by viewModel.runs.collectAsState()
     val spacing = RikkaTheme.spacing
-    val motion = RikkaTheme.motion
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -76,14 +75,18 @@ fun AgentHomeScreen(
         topBar = {
             TriplexTopBar(
                 title = "Agent",
-                actions = { TriplexTopBarAction(text = "My voice", onClick = onOpenVoice) },
+                actions = {
+                    TriplexTopBarAction(text = "Demo", onClick = onOpenDemo)
+                    TriplexTopBarAction(text = "My voice", onClick = onOpenVoice)
+                },
             )
         },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding()),
+                .padding(top = padding.calculateTopPadding())
+                .triplexContentWidth(),
             contentPadding = PaddingValues(
                 start = TriplexLayout.screenHorizontal,
                 end = TriplexLayout.screenHorizontal,
@@ -92,94 +95,67 @@ fun AgentHomeScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(spacing.lg),
         ) {
-            item {
-                // No entrance animation: this is the first thing on the screen
-                // and the answer to "can the agent take a call right now", so
-                // fading it in delays the one line the user came for.
-                AgentReadinessCard(
+            item(key = "status-tray") {
+                AgentStatusTray(
                     sipState = sipState,
                     autoAnswerAll = state.autoAnswerAll,
                     clonedVoiceReady = state.clonedVoiceReady,
-                )
-            }
-
-            item {
-                SetupEntries(
+                    routingAttested = state.routingAttested,
+                    hasSipCredentials = state.hasSipCredentials,
+                    activeTask = state.activeTask,
+                    error = state.error,
+                    onDismissError = viewModel::dismissError,
+                    onStopTask = { id -> viewModel.stopTask(id) },
                     onOpenInbound = onOpenInbound,
                     onOpenOutbound = onOpenOutbound,
+                    onOpenCallForward = onOpenCallForward,
+                    onOpenVoiceLab = onOpenVoiceLab,
+                    onOpenVoice = onOpenVoice,
+                    onOpenDemo = onOpenDemo,
                 )
             }
 
-            item {
-                AnimatedVisibility(
-                    visible = state.activeTask != null,
-                    enter = fadeIn(tween(motion.durationSlow)) + expandVertically(),
-                    exit = fadeOut(tween(motion.durationDefault)) + shrinkVertically(),
-                ) {
-                    state.activeTask?.let { task ->
-                        ActiveTaskCard(task = task, onStop = { viewModel.stopTask(task.id) })
-                    }
-                }
-            }
-
-            state.error?.let { error ->
-                item {
-                    TriplexCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        tone = TriplexCardTone.DANGER,
-                        onClick = viewModel::dismissError,
-                    ) {
-                        Text(
-                            text = error,
-                            modifier = Modifier.padding(spacing.lg),
-                        )
-                    }
-                }
-            }
-
-            item {
-                TriplexScreenHeader(
-                    eyebrow = "ACTIVITY",
-                    title = "Calls the agent handled",
-                    description = "Stored on this phone only. Nothing is uploaded.",
+            item(key = "activity-tray") {
+                AgentActivityTray(
+                    loading = state.loading && runs.isEmpty(),
+                    runs = runs,
+                    onOpenRun = onOpenRun,
                 )
-            }
-
-            when {
-                state.loading && runs.isEmpty() -> item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(spacing.xxl),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Spinner()
-                    }
-                }
-
-                runs.isEmpty() -> item { EmptyRunsCard() }
-
-                else -> items(runs, key = { it.id }) { run ->
-                    AgentRunRow(
-                        run = run,
-                        onClick = { onOpenRun(run.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
             }
         }
     }
 }
 
+/**
+ * Readiness, capability actions, and setup — one accent-tinted glass object.
+ */
 @Composable
-private fun AgentReadinessCard(
+private fun AgentStatusTray(
     sipState: SipState,
     autoAnswerAll: Boolean,
     clonedVoiceReady: Boolean,
+    routingAttested: Boolean,
+    hasSipCredentials: Boolean,
+    activeTask: TaskDefinition?,
+    error: String?,
+    onDismissError: () -> Unit,
+    onStopTask: (String) -> Unit,
+    onOpenInbound: () -> Unit,
+    onOpenOutbound: () -> Unit,
+    onOpenCallForward: () -> Unit,
+    onOpenVoiceLab: () -> Unit,
+    onOpenVoice: () -> Unit,
+    onOpenDemo: () -> Unit,
 ) {
     val spacing = RikkaTheme.spacing
     val registered = sipState == SipState.READY || sipState == SipState.IN_CALL
-    TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
+    val lineReady = sipState == SipState.READY || sipState == SipState.IN_CALL
+
+    TriplexTray(
+        tone = TriplexCardTone.ACCENT,
+        level = GlassLevel.Regular,
+    ) {
+        // ── Readiness ──────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -187,20 +163,19 @@ private fun AgentReadinessCard(
             horizontalArrangement = Arrangement.spacedBy(spacing.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Registered means the agent is sitting on the line waiting, which
-            // is what Listening renders — a faster breath than Idle. The orb
-            // has no content slot, so the glyph rides on top of it.
             Box(contentAlignment = Alignment.Center) {
                 VoiceOrb(
-                    state = if (registered) VoiceOrbState.Listening else VoiceOrbState.Idle,
+                    state = if (sipState == SipState.IN_CALL) {
+                        VoiceOrbState.Listening
+                    } else {
+                        VoiceOrbState.Idle
+                    },
                     size = 76.dp,
                 )
                 Icon(
                     imageVector = RikkaIcons.Phone,
                     contentDescription = null,
                     tint = RikkaTheme.colors.onPrimary,
-                    // Was a loose 25dp; the design system sizes icons by step,
-                    // and Lg (24dp) is the one that step lands on.
                     size = IconSize.Lg,
                 )
             }
@@ -210,13 +185,12 @@ private fun AgentReadinessCard(
             ) {
                 TriplexStatusPill(text = sipLabel(sipState), tone = sipTone(sipState))
                 Text(
-                    text = if (registered && autoAnswerAll) {
-                        "The agent answers your calls"
-                    } else if (registered) {
-                        "The agent answers only when you hand a call to it"
-                    } else {
-                        "The agent cannot take calls yet"
-                    },
+                    text = readinessHeadline(
+                        registered = registered,
+                        autoAnswerAll = autoAnswerAll,
+                        hasSipCredentials = hasSipCredentials,
+                        clonedVoiceReady = clonedVoiceReady,
+                    ),
                     variant = TextVariant.H3,
                 )
                 Text(
@@ -224,101 +198,225 @@ private fun AgentReadinessCard(
                     color = RikkaTheme.colors.onMuted,
                 )
                 Text(
-                    text = if (clonedVoiceReady) {
-                        "Your cloned voice is ready."
-                    } else {
-                        "Your cloned voice is not ready — the agent will not substitute one."
-                    },
+                    text = capabilityLadderLine(
+                        clonedVoiceReady = clonedVoiceReady,
+                        hasSipCredentials = hasSipCredentials,
+                        registered = registered,
+                        routingAttested = routingAttested,
+                    ),
                     variant = TextVariant.Small,
                     color = RikkaTheme.colors.onMuted,
+                )
+            }
+        }
+
+        TriplexTrayDivider()
+
+        // ── Capability actions ─────────────────────────────────────
+        Column(
+            modifier = Modifier.padding(
+                horizontal = spacing.lg,
+                vertical = spacing.md,
+            ),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
+        ) {
+            TriplexButton(
+                text = "Try your agent",
+                onClick = onOpenVoiceLab,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (!clonedVoiceReady) {
+                TriplexButton(
+                    text = "Set up my voice",
+                    onClick = onOpenVoice,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = TriplexButtonStyle.SECONDARY,
+                )
+            }
+            if (!hasSipCredentials || !lineReady) {
+                TriplexButton(
+                    text = "Watch how it works",
+                    onClick = onOpenDemo,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = TriplexButtonStyle.OUTLINE,
+                )
+            }
+            if (hasSipCredentials && !routingAttested) {
+                TriplexButton(
+                    text = "Forward my SIM",
+                    onClick = onOpenCallForward,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = TriplexButtonStyle.OUTLINE,
+                )
+            }
+        }
+
+        TriplexTrayDivider()
+
+        // ── Setup destinations ─────────────────────────────────────
+        TriplexTrayNavRow(
+            title = "Incoming calls",
+            description = "Answering, greeting, automations, quick replies",
+            onClick = onOpenInbound,
+        )
+        TriplexTrayDivider()
+        TriplexTrayNavRow(
+            title = "Outgoing calls",
+            description = "Tasks the agent places on your behalf",
+            onClick = onOpenOutbound,
+        )
+        TriplexTrayDivider()
+        TriplexTrayNavRow(
+            title = "SIM call forwarding",
+            description = "Route unanswered SIM rings to your Triplex line",
+            onClick = onOpenCallForward,
+        )
+
+        activeTask?.let { task ->
+            TriplexTrayDivider()
+            ActiveTaskRow(task = task, onStop = { onStopTask(task.id) })
+        }
+
+        error?.let { message ->
+            TriplexTrayDivider()
+            TriplexTrayRow(onClick = onDismissError) {
+                Text(
+                    text = message,
+                    color = RikkaTheme.colors.destructive,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
     }
 }
 
+/**
+ * Handled-call history as one tray. Rows are embedded — no per-run glass.
+ */
 @Composable
-private fun SetupEntries(onOpenInbound: () -> Unit, onOpenOutbound: () -> Unit) {
+private fun AgentActivityTray(
+    loading: Boolean,
+    runs: List<AgentRun>,
+    onOpenRun: (String) -> Unit,
+) {
     val spacing = RikkaTheme.spacing
-    Column(verticalArrangement = Arrangement.spacedBy(spacing.md)) {
-        SetupEntryCard(
-            title = "Incoming calls",
-            description = "Answering, greeting, automations, quick replies",
-            onClick = onOpenInbound,
-        )
-        SetupEntryCard(
-            title = "Outgoing calls",
-            description = "Tasks the agent places on your behalf",
-            onClick = onOpenOutbound,
-        )
-    }
-}
 
-@Composable
-private fun SetupEntryCard(title: String, description: String, onClick: () -> Unit) {
-    val spacing = RikkaTheme.spacing
-    TriplexCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
-        Column(
-            modifier = Modifier.padding(spacing.lg),
-            verticalArrangement = Arrangement.spacedBy(spacing.xs),
-        ) {
-            Text(text = title, variant = TextVariant.H4)
-            Text(
-                text = description,
-                variant = TextVariant.Small,
-                color = RikkaTheme.colors.onMuted,
-            )
+    TriplexTray(level = GlassLevel.Regular) {
+        TriplexTrayHeader(
+            eyebrow = "Activity",
+            title = "Calls the agent handled",
+            description = "Stored on this phone only. Nothing is uploaded.",
+        )
+
+        when {
+            loading -> {
+                TriplexTrayDivider()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(spacing.xxl),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Spinner()
+                }
+            }
+
+            runs.isEmpty() -> {
+                TriplexTrayDivider()
+                Column(
+                    modifier = Modifier.padding(spacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(spacing.sm),
+                ) {
+                    Text(text = "No calls yet", variant = TextVariant.H3)
+                    Text(
+                        text = "When the agent answers or places a call, the transcript appears here.",
+                        color = RikkaTheme.colors.onMuted,
+                    )
+                }
+            }
+
+            else -> {
+                runs.forEach { run ->
+                    TriplexTrayDivider()
+                    AgentRunRow(
+                        run = run,
+                        onClick = { onOpenRun(run.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                        embedded = true,
+                    )
+                }
+            }
         }
     }
 }
 
+@Composable
+private fun ActiveTaskRow(
+    task: TaskDefinition,
+    onStop: () -> Unit,
+) {
+    val spacing = RikkaTheme.spacing
+    TriplexTrayRow(
+        contentPadding = PaddingValues(
+            horizontal = spacing.lg,
+            vertical = spacing.md,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+        ) {
+            TriplexStatusPill(
+                text = "ACTIVE TASK",
+                tone = TriplexCardTone.SUCCESS,
+                leadingColor = RikkaTheme.colors.success,
+            )
+            Text(text = taskTypeLabel(task.task_type), variant = TextVariant.H4)
+            Text(text = task.destination_number)
+        }
+        TriplexButton(text = "Stop", onClick = onStop, style = TriplexButtonStyle.DANGER)
+    }
+}
+
+/** Kept for call sites that still import a standalone active-task card. */
 @Composable
 internal fun ActiveTaskCard(
     task: TaskDefinition,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val spacing = RikkaTheme.spacing
-    TriplexCard(modifier = modifier.fillMaxWidth(), tone = TriplexCardTone.SUCCESS) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(spacing.lg),
-            horizontalArrangement = Arrangement.spacedBy(spacing.lg),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(spacing.xs),
-            ) {
-                TriplexStatusPill(
-                    text = "ACTIVE TASK",
-                    tone = TriplexCardTone.SUCCESS,
-                    leadingColor = RikkaTheme.colors.success,
-                )
-                Text(text = taskTypeLabel(task.task_type), variant = TextVariant.H4)
-                Text(text = task.destination_number)
-            }
-            TriplexButton(text = "Stop", onClick = onStop, style = TriplexButtonStyle.DANGER)
-        }
+    TriplexTray(modifier = modifier, tone = TriplexCardTone.SUCCESS) {
+        ActiveTaskRow(task = task, onStop = onStop)
     }
 }
 
-@Composable
-private fun EmptyRunsCard() {
-    val spacing = RikkaTheme.spacing
-    TriplexCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(spacing.xl),
-            verticalArrangement = Arrangement.spacedBy(spacing.sm),
-        ) {
-            Text(text = "No calls yet", variant = TextVariant.H3)
-            Text(
-                text = "When the agent answers or places a call, the transcript appears here.",
-                color = RikkaTheme.colors.onMuted,
-            )
-        }
+private fun readinessHeadline(
+    registered: Boolean,
+    autoAnswerAll: Boolean,
+    hasSipCredentials: Boolean,
+    clonedVoiceReady: Boolean,
+): String = when {
+    registered && autoAnswerAll -> "The agent answers your calls"
+    registered -> "The agent answers only when you hand a call to it"
+    !hasSipCredentials && clonedVoiceReady -> "Voice ready — practice while the line catches up"
+    !hasSipCredentials -> "Dialer ready — set up voice or try the lab"
+    else -> "The agent cannot take live calls yet"
+}
+
+private fun capabilityLadderLine(
+    clonedVoiceReady: Boolean,
+    hasSipCredentials: Boolean,
+    registered: Boolean,
+    routingAttested: Boolean,
+): String {
+    val voice = if (clonedVoiceReady) "Voice ✓" else "Voice ·"
+    val line = when {
+        registered -> "Line ✓"
+        hasSipCredentials -> "Line …"
+        else -> "Line ·"
     }
+    val routing = if (routingAttested) "Routing ✓" else "Routing ·"
+    return "$voice  $line  $routing"
 }
 
 private fun sipLabel(state: SipState): String = when (state) {

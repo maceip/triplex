@@ -31,6 +31,7 @@ import dev.triplex.ui.components.TriplexButtonStyle
 import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexStatusPill
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaui.components.ui.call.CallDecisionSlider
 import zed.rainxch.rikkaui.components.ui.call.IncomingCallSheet
 import zed.rainxch.rikkaui.components.ui.text.Text
@@ -112,7 +113,10 @@ fun IncomingCallSurface(
         onDecline = { onAction(IncomingCallActionId.HANG_UP) },
         answerLabel = answer?.label.orEmpty().ifBlank { "Answer" },
         declineLabel = hangUp?.label.orEmpty().ifBlank { "Decline" },
-        modifier = if (locked) modifier.fillMaxSize() else modifier,
+        // Locked stays full-bleed — a decision made without unlocking should own
+        // the panel it is made on. Unlocked, the sheet is a card among the app's
+        // other surfaces and is capped to the same column they are.
+        modifier = if (locked) modifier.fillMaxSize() else modifier.triplexContentWidth(),
         callerDetail = callerDetail,
         quickReplies = state.quickReplies,
         onQuickReply = onQuickReply,
@@ -152,7 +156,15 @@ fun IncomingCallSurface(
                     CallDecisionSlider(
                         onDecline = { onAction(IncomingCallActionId.DECLINE) },
                         onAnswer = { onAction(IncomingCallActionId.ANSWER) },
-                        onTransfer = { onAction(IncomingCallActionId.SEND_TO_AGENT) },
+                        // No downward track unless the hand-off is live. A third
+                        // track the finger can reach and the call cannot honour
+                        // fails the user at the moment they have committed to the
+                        // gesture, which is the worst possible moment.
+                        onTransfer = if (sendToAgent?.enabled == true) {
+                            { onAction(IncomingCallActionId.SEND_TO_AGENT) }
+                        } else {
+                            null
+                        },
                         declineActionLabel = decline?.label.orEmpty().ifBlank { "Decline call" },
                         answerActionLabel = answer.label.ifBlank { "Answer call" },
                         transferActionLabel = sendToAgent?.label.orEmpty()

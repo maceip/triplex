@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -27,10 +29,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -47,7 +51,6 @@ import dev.triplex.dialer.RecentCallType
 import dev.triplex.ui.components.OutlinedTextInput
 import dev.triplex.ui.components.TriplexButton
 import dev.triplex.ui.components.TriplexButtonStyle
-import dev.triplex.ui.components.TriplexCard
 import dev.triplex.ui.components.TriplexCardTone
 import dev.triplex.ui.components.TriplexDialDisplay
 import dev.triplex.ui.components.TriplexEmptyState
@@ -57,6 +60,12 @@ import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexSectionHeader
 import dev.triplex.ui.components.TriplexSetupBanner
 import dev.triplex.ui.components.TriplexStatusPill
+import dev.triplex.ui.components.TriplexTray
+import dev.triplex.ui.components.TriplexTrayDivider
+import dev.triplex.ui.theme.LocalTriplexWidthClass
+import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.TriplexWidthClass
+import dev.triplex.ui.theme.triplexContentWidth
 import kotlin.math.abs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -77,7 +86,7 @@ import zed.rainxch.rikkaui.components.ui.call.CallHistoryItem
 import zed.rainxch.rikkaui.components.ui.call.GlassDialpad
 import zed.rainxch.rikkaui.components.ui.fab.Fab
 import zed.rainxch.rikkaui.components.ui.fab.FabSize
-import zed.rainxch.rikkaui.components.ui.fab.FabVariant
+import zed.rainxch.rikkaui.components.ui.glass.GlassChip
 import zed.rainxch.rikkaui.components.ui.glass.GlassIconButton
 import zed.rainxch.rikkaui.components.ui.glass.GlassLevel
 import zed.rainxch.rikkaui.components.ui.glass.GlassPanel
@@ -110,6 +119,7 @@ import zed.rainxch.rikkaui.foundation.RikkaTheme
 fun KeypadScreen(
     initialNumber: String,
     callInBackground: Boolean,
+    callOnHold: Boolean,
     retryNumber: String?,
     onRetryConsumed: () -> Unit,
     onReturnToCall: () -> Unit,
@@ -126,8 +136,16 @@ fun KeypadScreen(
     val recentsState = rememberLazyListState()
     val density = LocalDensity.current
 
-    var openPanel by remember { mutableStateOf<DirectoryPanel?>(null) }
-    var accountPickerVisible by remember { mutableStateOf(false) }
+    // On an expanded window the directory is a column standing beside the
+    // dialler rather than a sheet raised over it. There is room for both, and a
+    // phone book you have to summon is one that gets used less than it should.
+    val sidePane = LocalTriplexWidthClass.current == TriplexWidthClass.Expanded
+
+    // Saveable, not remembered: unfolding the device is a configuration change,
+    // and a directory that closes itself every time the phone opens is worse
+    // than one that never opened.
+    var openPanel by rememberSaveable { mutableStateOf<DirectoryPanel?>(null) }
+    var accountPickerVisible by rememberSaveable { mutableStateOf(false) }
     // The dock is measured rather than guessed: its height depends on the smart
     // dial hits and on whether the SIM affordance is there at all, and both the
     // list's bottom inset and the FAB stack have to clear it.
@@ -197,201 +215,268 @@ fun KeypadScreen(
     val listBackdrop = rememberGlassBackdrop()
     val scenery = rememberGlassBackdrops(LocalGlassBackdrop.current, listBackdrop)
 
-    Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().glassBackdropSource(listBackdrop),
-            contentPadding = PaddingValues(
-                start = 20.dp,
-                end = 20.dp,
-                top = 18.dp,
-                bottom = dockHeight + 24.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item(key = "header") {
-                TriplexScreenHeader(
-                    title = "Phone",
-                    eyebrow = "Triplex",
-                    trailing = {
-                        TriplexButton(
-                            text = "Triplex app",
-                            onClick = onOpenTriplex,
-                            style = TriplexButtonStyle.GHOST,
-                        )
-                    },
-                )
+    Row(modifier = modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .glassBackdropSource(listBackdrop)
+                    .triplexContentWidth(),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = 20.dp,
+                    top = 18.dp,
+                    bottom = dockHeight + 24.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "header") {
+                    TriplexScreenHeader(
+                        title = "Phone",
+                        eyebrow = "Triplex",
+                        trailing = {
+                            TriplexButton(
+                                text = "Triplex app",
+                                onClick = onOpenTriplex,
+                                style = TriplexButtonStyle.GHOST,
+                            )
+                        },
+                    )
+                }
+
+                if (callInBackground) {
+                    item(key = "call-in-background") {
+                        TriplexTray(
+                            modifier = Modifier.fillMaxWidth(),
+                            tone = TriplexCardTone.ACCENT,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // The banner is shown for any backgrounded call,
+                                // and "Add call" is not the only way to get here
+                                // — so it says which of the two states the call
+                                // is actually in rather than assuming a hold that
+                                // may not have happened.
+                                Text(
+                                    text = if (callOnHold) {
+                                        "Current call is on hold"
+                                    } else {
+                                        "Current call in progress"
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TriplexButton(
+                                    text = "Return to call",
+                                    onClick = onReturnToCall,
+                                    style = TriplexButtonStyle.GHOST,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                items(state.setup.outstanding, key = { "setup-${it.name}" }) { request ->
+                    val copy = setupCopy(request)
+                    TriplexSetupBanner(
+                        title = copy.title,
+                        description = copy.description,
+                        actionLabel = copy.action,
+                        onAction = { viewModel.dispatch(KeypadIntent.RequestSetup(request)) },
+                    )
+                }
+
+                // Favourites stay on the main screen: they are one-tap dialling,
+                // which belongs next to the pad rather than two taps deep in a
+                // panel — and they give the docked glass something to refract.
+                favoritesBody(state, viewModel)
             }
 
-            if (callInBackground) {
-                item(key = "call-in-background") {
-                    TriplexCard(modifier = Modifier.fillMaxWidth(), tone = TriplexCardTone.ACCENT) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+            // Everything below refracts the atmosphere *and* the list it covers,
+            // so the keys and the panels pick up the content behind them instead
+            // of a flat tint.
+            CompositionLocalProvider(LocalGlassBackdrop provides scenery) {
+                DialDock(
+                    dialString = state.dialString,
+                    dialMatches = state.dialMatches,
+                    canPlaceCall = state.canPlaceCall,
+                    accounts = state.accounts,
+                    selectedAccountId = state.selectedAccountId,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .onSizeChanged { size ->
+                            val next = with(density) { size.height.toDp() }
+                            // The measured height feeds the list's bottom inset
+                            // and the FAB stack's offset, so a one-pixel wobble
+                            // would relayout both. Only a change big enough to
+                            // see is worth propagating.
+                            if (abs((next - dockHeight).value) > DockHeightEpsilon) {
+                                dockHeight = next
+                            }
+                        },
+                    onIntent = onIntent,
+                    onPaste = {
+                        clipboard.getText()?.text?.let {
+                            onIntent(KeypadIntent.SetDialString(it))
+                        }
+                    },
+                    onOpenAccountPicker = { accountPickerVisible = true },
+                )
+
+                // Directory shortcuts sit on the dock's shoulder as glass beads —
+                // same material as the pad keys, not tiny opaque Secondary FABs.
+                if (!sidePane && openPanel == null) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = dockHeight + 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        horizontalAlignment = Alignment.End,
+                    ) {
+                        GlassIconButton(
+                            onClick = { openPanel = DirectoryPanel.RECENTS },
+                            size = DirectoryFabSize,
+                            level = GlassLevel.Prominent,
+                            label = "Recent calls",
                         ) {
-                            Text("Current call is on hold", modifier = Modifier.weight(1f))
-                            TriplexButton(
-                                text = "Return to call",
-                                onClick = onReturnToCall,
-                                style = TriplexButtonStyle.GHOST,
+                            Icon(
+                                imageVector = RikkaIcons.Clock,
+                                contentDescription = null,
+                                size = IconSize.Default,
+                            )
+                        }
+                        GlassIconButton(
+                            onClick = { openPanel = DirectoryPanel.CONTACTS },
+                            size = DirectoryFabSize,
+                            level = GlassLevel.Prominent,
+                            label = "Contacts and search",
+                        ) {
+                            Icon(
+                                imageVector = RikkaIcons.Users,
+                                contentDescription = null,
+                                size = IconSize.Default,
                             )
                         }
                     }
                 }
-            }
 
-            items(state.setup.outstanding, key = { "setup-${it.name}" }) { request ->
-                val copy = setupCopy(request)
-                TriplexSetupBanner(
-                    title = copy.title,
-                    description = copy.description,
-                    actionLabel = copy.action,
-                    onAction = { viewModel.dispatch(KeypadIntent.RequestSetup(request)) },
-                )
-            }
-
-            // Favourites stay on the main screen: they are one-tap dialling, which
-            // belongs next to the pad rather than two taps deep in a panel — and
-            // they are what gives the docked glass something to refract.
-            favoritesBody(state, viewModel)
-        }
-
-        // Everything below refracts the atmosphere *and* the list it covers, so
-        // the keys and the panels pick up the content behind them instead of a
-        // flat tint.
-        CompositionLocalProvider(LocalGlassBackdrop provides scenery) {
-            DialDock(
-                dialString = state.dialString,
-                dialMatches = state.dialMatches,
-                canPlaceCall = state.canPlaceCall,
-                accounts = state.accounts,
-                selectedAccountId = state.selectedAccountId,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .onSizeChanged { size ->
-                        val next = with(density) { size.height.toDp() }
-                        // The measured height feeds the list's bottom inset and
-                        // the FAB stack's offset, so a one-pixel wobble would
-                        // relayout both. Only a change big enough to see is
-                        // worth propagating.
-                        if (abs((next - dockHeight).value) > DockHeightEpsilon) {
-                            dockHeight = next
-                        }
-                    },
-                onIntent = onIntent,
-                onPaste = {
-                    clipboard.getText()?.text?.let {
-                        onIntent(KeypadIntent.SetDialString(it))
-                    }
-                },
-                onOpenAccountPicker = { accountPickerVisible = true },
-            )
-
-            // Recents and contacts are secondary to dialling, so they are small
-            // FABs stacked on the dock's shoulder rather than sections competing
-            // with the pad for the screen. They step aside while a panel is open,
-            // where they would only float over their own scrim.
-            if (openPanel == null) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = dockHeight + 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.End,
-                ) {
-                    Fab(
-                        icon = RikkaIcons.Clock,
-                        label = "Recent calls",
-                        onClick = { openPanel = DirectoryPanel.RECENTS },
-                        variant = FabVariant.Secondary,
-                        size = FabSize.Small,
-                        shape = RikkaTheme.shapes.full,
+                val raisedPanel = if (sidePane) null else openPanel
+                raisedPanel?.let { panel ->
+                    // A panel you cannot leave is a trap, so it gets the two
+                    // exits every sheet is expected to have: a tap on the scrim
+                    // outside it, and the close button in its header — plus the
+                    // system back gesture, wired below. The scrim is drawn before
+                    // the panel so it never steals the panel's own touches, and is
+                    // light enough that the panel still reads as glass over a
+                    // visible list rather than over a black rectangle.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(RikkaTheme.colors.background.copy(alpha = 0.3f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClickLabel = "Close the panel",
+                            ) { openPanel = null },
                     )
-                    Fab(
-                        icon = RikkaIcons.Users,
-                        label = "Contacts and search",
-                        onClick = { openPanel = DirectoryPanel.CONTACTS },
-                        variant = FabVariant.Secondary,
-                        size = FabSize.Small,
-                        shape = RikkaTheme.shapes.full,
+
+                    DirectorySheet(
+                        panel = panel,
+                        state = state,
+                        viewModel = viewModel,
+                        recentsState = recentsState,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .fillMaxHeight(RaisedPanelHeightFraction)
+                            .triplexContentWidth(),
+                        onDismiss = { openPanel = null },
                     )
                 }
             }
 
-            openPanel?.let { panel ->
-                // A panel you cannot leave is a trap, so it gets the two exits
-                // every sheet is expected to have: a tap on the scrim outside it,
-                // and the close button in its header — plus the system back
-                // gesture, wired below. The scrim is drawn before the panel so it
-                // never steals the panel's own touches, and is light enough that
-                // the panel still reads as glass over a visible list rather than
-                // over a black rectangle.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(RikkaTheme.colors.background.copy(alpha = 0.3f))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClickLabel = "Close the panel",
-                        ) { openPanel = null },
-                )
+            // One handler for both raised surfaces, topmost first. The side pane
+            // is furniture rather than a raised surface, so back does not close
+            // it — the shell handles the gesture instead.
+            BackHandler(enabled = accountPickerVisible || (!sidePane && openPanel != null)) {
+                if (accountPickerVisible) accountPickerVisible = false else openPanel = null
+            }
 
-                DirectorySheet(
-                    panel = panel,
-                    state = state,
-                    viewModel = viewModel,
-                    recentsState = recentsState,
+            if (accountPickerVisible && state.accounts.size > 1) {
+                AccountChoiceOverlay(
+                    number = null,
+                    accounts = state.accounts,
                     modifier = Modifier.align(Alignment.BottomCenter),
-                    onDismiss = { openPanel = null },
+                    title = "Outgoing SIM",
+                    description = "New calls go out on the account you pick here.",
+                    selectedAccountId = state.selectedAccountId,
+                    onSelect = {
+                        viewModel.dispatch(KeypadIntent.SelectAccount(it))
+                        accountPickerVisible = false
+                    },
+                    onDismiss = { accountPickerVisible = false },
+                )
+            }
+
+            state.accountChoiceRequiredFor?.let { pending ->
+                AccountChoiceOverlay(
+                    number = pending,
+                    accounts = state.accounts,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    onSelect = { viewModel.dispatch(KeypadIntent.SelectAccountAndCall(it)) },
+                    onDismiss = { viewModel.dispatch(KeypadIntent.DismissAccountPicker) },
                 )
             }
         }
 
-        // One handler for both raised surfaces, topmost first.
-        BackHandler(enabled = openPanel != null || accountPickerVisible) {
-            if (accountPickerVisible) accountPickerVisible = false else openPanel = null
-        }
-
-        if (accountPickerVisible && state.accounts.size > 1) {
-            AccountChoiceOverlay(
-                number = null,
-                accounts = state.accounts,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                title = "Outgoing SIM",
-                description = "New calls go out on the account you pick here.",
-                selectedAccountId = state.selectedAccountId,
-                onSelect = {
-                    viewModel.dispatch(KeypadIntent.SelectAccount(it))
-                    accountPickerVisible = false
-                },
-                onDismiss = { accountPickerVisible = false },
-            )
-        }
-
-        state.accountChoiceRequiredFor?.let { pending ->
-            AccountChoiceOverlay(
-                number = pending,
-                accounts = state.accounts,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                onSelect = { viewModel.dispatch(KeypadIntent.SelectAccountAndCall(it)) },
-                onDismiss = { viewModel.dispatch(KeypadIntent.DismissAccountPicker) },
-            )
+        // The directory as a column, not a sheet. Drawn after the list it sits
+        // beside, so it refracts it rather than sampling itself, and it keeps the
+        // dialler on screen while a number is looked up.
+        if (sidePane) {
+            CompositionLocalProvider(LocalGlassBackdrop provides scenery) {
+                DirectorySheet(
+                    panel = openPanel ?: DirectoryPanel.RECENTS,
+                    state = state,
+                    viewModel = viewModel,
+                    recentsState = recentsState,
+                    modifier = Modifier
+                        .width(TriplexLayout.directoryPaneWidth)
+                        .fillMaxHeight(),
+                    onSelectPanel = { openPanel = it },
+                )
+            }
         }
     }
 }
 
-/** The two directory surfaces the stacked FABs raise. */
-private enum class DirectoryPanel { RECENTS, CONTACTS }
+/** How much of the screen a raised directory sheet takes. */
+private const val RaisedPanelHeightFraction = 0.86f
+
+/** The two directory lists, whether raised over the dialler or standing beside it. */
+private enum class DirectoryPanel(val title: String) {
+    RECENTS("Recents"),
+    CONTACTS("Contacts"),
+}
 
 /**
- * Recents or contacts, raised over the dialer as a slab of glass.
+ * Recents or contacts, as a slab of glass.
  *
  * The search field is part of the contacts panel rather than a permanent row on
  * the main screen: searching is something you go and do, and the directory it
  * searches is right underneath it. Recents get the hoisted [recentsState] so the
  * screen's paging effect keeps loading older calls as the panel is scrolled.
+ *
+ * The same panel serves both shapes the directory takes. Raised over the dialer
+ * it is one list with a title and a way out, because it was asked for and can be
+ * dismissed. Standing beside the dialer it is permanent furniture, so it loses
+ * the close button and gains a pair of chips: with nothing to dismiss, switching
+ * between the two lists is the only control it needs.
+ *
+ * @param onDismiss closes the panel; null when it is a column that cannot close.
+ * @param onSelectPanel switches between recents and contacts in place; null when
+ *   the panel was raised for one of them specifically.
  */
 @Composable
 private fun DirectorySheet(
@@ -399,33 +484,52 @@ private fun DirectorySheet(
     state: KeypadUiState,
     viewModel: KeypadViewModel,
     recentsState: LazyListState,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    onDismiss: (() -> Unit)? = null,
+    onSelectPanel: ((DirectoryPanel) -> Unit)? = null,
 ) {
     val contactsState = rememberLazyListState()
     GlassPanel(
-        modifier = modifier
-            .fillMaxWidth()
-            .fillMaxHeight(0.86f)
-            .padding(12.dp),
+        modifier = modifier.padding(12.dp),
+        // Rows inside are embedded furniture; chips still nest glass, so the
+        // panel keeps recording for them.
+        hostsGlass = true,
     ) {
         Column(
             modifier = Modifier.fillMaxSize().padding(RikkaTheme.spacing.lg),
             verticalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm),
         ) {
-            TriplexScreenHeader(
-                title = when (panel) {
-                    DirectoryPanel.RECENTS -> "Recents"
-                    DirectoryPanel.CONTACTS -> "Contacts"
-                },
-                trailing = {
-                    TriplexIconButton(
-                        imageVector = RikkaIcons.X,
-                        contentDescription = "Close the panel",
-                        onClick = onDismiss,
-                    )
-                },
-            )
+            if (onSelectPanel != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(RikkaTheme.spacing.sm),
+                ) {
+                    DirectoryPanel.entries.forEach { entry ->
+                        GlassChip(
+                            selected = entry == panel,
+                            onClick = { onSelectPanel(entry) },
+                            // One level in from the panel, which steps every
+                            // level down a rung as it nests.
+                            level = GlassLevel.Regular,
+                        ) {
+                            Text(entry.title)
+                        }
+                    }
+                }
+            } else {
+                TriplexScreenHeader(
+                    title = panel.title,
+                    trailing = {
+                        onDismiss?.let {
+                            TriplexIconButton(
+                                imageVector = RikkaIcons.X,
+                                contentDescription = "Close the panel",
+                                onClick = it,
+                            )
+                        }
+                    },
+                )
+            }
 
             if (panel == DirectoryPanel.CONTACTS) {
                 OutlinedTextInput(
@@ -445,7 +549,9 @@ private fun DirectorySheet(
                 when (panel) {
                     DirectoryPanel.RECENTS -> recentsBody(state, viewModel)
                     DirectoryPanel.CONTACTS -> if (state.searching) {
-                        searchResults(state, viewModel, onDismiss)
+                        // A column that never closes has nothing to get out of
+                        // the way: the query lands on the pad and the list stays.
+                        searchResults(state, viewModel, onDismiss ?: {})
                     } else {
                         item(key = "search-prompt") {
                             TriplexEmptyState(
@@ -493,6 +599,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
             actionIcon = RikkaIcons.Phone,
             actionContentDescription = "Call ${result.title}",
             onAction = { viewModel.dispatch(KeypadIntent.PlaceCall(result.number)) },
+            // Directory sheet is already a GlassPanel.
+            embedded = true,
         )
     }
 }
@@ -516,10 +624,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.favoritesBody(
 
     item(key = "favorites-header") { TriplexSectionHeader("Favorites") }
     item(key = "favorites-strip") {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.favorites, key = { "${it.id}:${it.number}" }) { contact ->
-                FavoriteChip(contact) {
-                    viewModel.dispatch(KeypadIntent.PlaceCall(contact.number))
+        // One tray for the whole strip — chips are furniture on it, not twelve
+        // miniature glass cards.
+        TriplexTray(
+            contentPadding = PaddingValues(
+                horizontal = RikkaTheme.spacing.sm,
+                vertical = RikkaTheme.spacing.sm,
+            ),
+        ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(state.favorites, key = { "${it.id}:${it.number}" }) { contact ->
+                    FavoriteChip(contact) {
+                        viewModel.dispatch(KeypadIntent.PlaceCall(contact.number))
+                    }
                 }
             }
         }
@@ -548,25 +665,28 @@ private fun androidx.compose.foundation.lazy.LazyListScope.recentsBody(
 
     state.recentGroups.forEach { group ->
         item(key = "day-${group.date}") { TriplexSectionHeader(group.label) }
-        items(group.calls, key = { "recent-${it.id}" }) { call ->
-            val title = call.name.ifBlank { call.number.ifBlank { UNKNOWN_CALLER } }
-            Column {
-                CallHistoryItem(
-                    name = title,
-                    detail = call.typeLabel,
-                    timestamp = call.timeLabel,
-                    direction = call.type.toCallDirection(),
-                    // Unread rides the badge slot rather than a bullet glued to
-                    // the name, so a screen reader announces it as its own thing.
-                    badge = if (call.unread) "NEW" else "",
-                    // The call log is read-only here — there is no delete intent
-                    // to wire, and an empty callback hides the swipe action.
-                    callBackLabel = "Call $title",
-                    onClick = { viewModel.dispatch(KeypadIntent.ExpandRecent(call.number)) },
-                    onCallBack = { viewModel.dispatch(KeypadIntent.PlaceCall(call.number)) },
-                )
-                if (state.expandedNumber == call.number) {
-                    ExpandedHistory(state.expandedHistory)
+        item(key = "day-tray-${group.date}") {
+            // One sampler per day, not per call — same tray metaphor as Agent.
+            TriplexTray {
+                group.calls.forEachIndexed { index, call ->
+                    if (index > 0) TriplexTrayDivider()
+                    val title = call.name.ifBlank { call.number.ifBlank { UNKNOWN_CALLER } }
+                    Column {
+                        CallHistoryItem(
+                            name = title,
+                            detail = call.typeLabel,
+                            timestamp = call.timeLabel,
+                            direction = call.type.toCallDirection(),
+                            badge = if (call.unread) "NEW" else "",
+                            callBackLabel = "Call $title",
+                            onClick = { viewModel.dispatch(KeypadIntent.ExpandRecent(call.number)) },
+                            onCallBack = { viewModel.dispatch(KeypadIntent.PlaceCall(call.number)) },
+                            embedded = true,
+                        )
+                        if (state.expandedNumber == call.number) {
+                            ExpandedHistory(state.expandedHistory)
+                        }
+                    }
                 }
             }
         }
@@ -651,30 +771,37 @@ private fun ExpandedHistory(history: List<RecentCall>) {
 @Composable
 private fun FavoriteChip(contact: DialerContact, onCall: () -> Unit) {
     val display = contact.name.ifBlank { contact.number }
-    // Subtle for the same reason the list rows are: a strip of these sits on the
-    // screen rather than floating over it.
-    TriplexCard(onClick = onCall, level = GlassLevel.Subtle) {
-        Column(
-            modifier = Modifier
-                .width(FavoriteChipWidth)
-                .padding(horizontal = 8.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Avatar(
-                fallback = initialsOf(display),
-                size = AvatarSize.Lg,
-                animation = AvatarAnimation.None,
-                label = "Call $display",
+    // No per-chip glass — the favorites strip tray is the surface.
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier = Modifier
+            .width(FavoriteChipWidth)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onCall,
+                onClickLabel = "Call $display",
             )
-            Text(
-                text = display,
-                variant = TextVariant.Small,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+            .padding(horizontal = 8.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Avatar(
+            fallback = initialsOf(display),
+            size = AvatarSize.Lg,
+            animation = AvatarAnimation.None,
+            label = "Call $display",
+            // muted is near-black in dark themes and punches holes in the tray;
+            // a light wash keeps initials readable without a solid disc.
+            containerColor = Color.White.copy(alpha = 0.16f),
+        )
+        Text(
+            text = display,
+            variant = TextVariant.Small,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -725,7 +852,16 @@ private fun DialDock(
     // to twelve keys.
     val onKeyPress = remember(onIntent) { { digit: Char -> onIntent(KeypadIntent.AppendDigit(digit)) } }
 
-    GlassPanel(modifier = modifier.fillMaxWidth().padding(12.dp)) {
+    // Capped, not full-bleed. The dock is a *pad*, and a pad stretched across an
+    // unfolded screen puts 1 and 3 a thumb-stretch apart and turns what should
+    // be a floating slab into a wall of frost along the bottom edge.
+    GlassPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .wrapContentWidth(Alignment.CenterHorizontally)
+            .widthIn(max = TriplexLayout.dialDockMaxWidth)
+            .padding(12.dp),
+    ) {
         Column(
             modifier = Modifier.padding(RikkaTheme.spacing.lg),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -738,6 +874,8 @@ private fun DialDock(
                     actionIcon = RikkaIcons.Phone,
                     actionContentDescription = "Call ${match.title}",
                     onAction = { onIntent(KeypadIntent.PlaceCall(match.number)) },
+                    // Dock GlassPanel is already the tray.
+                    embedded = true,
                 )
             }
 
@@ -829,6 +967,9 @@ private fun DialDock(
 /** Diameter of the voicemail and backspace keys flanking the Call button. */
 private val DockSecondaryKeySize = 56.dp
 
+/** Directory shortcuts above the dock — glass beads, not mini opaque FABs. */
+private val DirectoryFabSize = 52.dp
+
 /** Smart dial in the dock is a hint, not a browser — the keys keep their room. */
 private const val DockMatchLimit = 2
 
@@ -856,7 +997,7 @@ private fun AccountChoiceOverlay(
     description: String = "This device has more than one SIM and no default for outgoing calls.",
     selectedAccountId: String? = null,
 ) {
-    TriplexCard(modifier = modifier.fillMaxWidth().padding(16.dp), tone = TriplexCardTone.ACCENT) {
+    TriplexTray(modifier = modifier.padding(16.dp), tone = TriplexCardTone.ACCENT) {
         Column(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -884,7 +1025,7 @@ private fun AccountChoiceOverlay(
                 modifier = Modifier.fillMaxWidth(),
                 style = TriplexButtonStyle.GHOST,
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(modifier.height(2.dp))
         }
     }
 }

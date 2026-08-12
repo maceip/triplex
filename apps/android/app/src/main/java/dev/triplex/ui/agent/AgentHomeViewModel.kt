@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.triplex.data.local.AgentConfigRepository
+import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.local.db.AgentRunDao
 import dev.triplex.data.repository.Result
 import dev.triplex.data.repository.TaskRepository
@@ -28,6 +29,8 @@ data class AgentHomeState(
     val error: String? = null,
     val autoAnswerAll: Boolean = true,
     val clonedVoiceReady: Boolean = false,
+    val routingAttested: Boolean = false,
+    val hasSipCredentials: Boolean = false,
 )
 
 /**
@@ -43,6 +46,7 @@ class AgentHomeViewModel @Inject constructor(
     private val outboundCallCoordinator: OutboundCallCoordinator,
     private val agentConfig: AgentConfigRepository,
     private val telephonyController: TelephonyController,
+    private val secureStorage: SecureStorage,
     runDao: AgentRunDao,
 ) : ViewModel() {
 
@@ -89,6 +93,9 @@ class AgentHomeViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(
                 clonedVoiceReady = agentConfig.clonedVoiceAvailable(),
+                routingAttested = secureStorage.isRoutingAttested(),
+                hasSipCredentials = !secureStorage.getPlivoUsername().isNullOrBlank() &&
+                    !secureStorage.getPlivoPassword().isNullOrBlank(),
             )
         }
     }

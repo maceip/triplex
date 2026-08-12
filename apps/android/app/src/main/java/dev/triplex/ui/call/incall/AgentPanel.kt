@@ -36,9 +36,10 @@ import zed.rainxch.rikkaui.foundation.RikkaTheme
  * What Triplex can do on the call that is already running (reskin.md §3.4).
  *
  * The panel is drawn on every call, including the SIM calls Triplex cannot hear.
- * On those it collapses to one honest sentence and a hand-off control, because
- * "Triplex is not on this call" is information the user needs — a panel that
- * vanished would leave them guessing whether the agent was silently listening.
+ * On those it collapses to one honest sentence — and to a hand-off control only
+ * where the hand-off can actually be performed — because "Triplex is not on this
+ * call" is information the user needs, and a panel that vanished would leave
+ * them guessing whether the agent was silently listening.
  *
  * Everything here is a callback. The panel neither knows nor cares which
  * telephony stack carries the leg.

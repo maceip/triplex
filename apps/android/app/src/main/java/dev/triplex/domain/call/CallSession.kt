@@ -44,6 +44,16 @@ data class CallCapabilities(
     /** Telecom, pre-answer, carrier-dependent (`CAPABILITY_SUPPORT_DEFLECT`). */
     val canDeflectToAgent: Boolean = false,
     /**
+     * Telecom, post-answer: whether Triplex can be dialled as a second leg and
+     * conferenced into this call.
+     *
+     * Deflection is ringing-only, so a call that has already been answered is
+     * handed over by placing a second call to the agent number and merging it.
+     * That needs the number to exist; without one there is no leg to place and
+     * the hand-off is not offered at all rather than offered and refused.
+     */
+    val canConferenceAgent: Boolean = false,
+    /**
      * True only on the SIP stack.
      *
      * A third-party default dialer gets call *state*, not call *audio*

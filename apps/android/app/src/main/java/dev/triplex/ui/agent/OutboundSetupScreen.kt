@@ -33,6 +33,7 @@ import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.components.TriplexToggleRow
 import dev.triplex.ui.components.TriplexTopBar
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaicons.tokens.ArrowLeft
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.alertdialog.AlertDialog
@@ -99,7 +100,8 @@ fun OutboundSetupScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding()),
+                .padding(top = padding.calculateTopPadding())
+                .triplexContentWidth(),
             contentPadding = PaddingValues(
                 start = TriplexLayout.screenHorizontal,
                 end = TriplexLayout.screenHorizontal,

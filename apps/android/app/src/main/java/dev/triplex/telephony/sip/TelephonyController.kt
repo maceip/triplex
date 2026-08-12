@@ -153,7 +153,9 @@ class TelephonyController @Inject constructor(
             .build()
 
         isInitialized.set(true)
-        scope.launch { callTranscriber.prepare() }
+        // SODA prepare() unpacks the language pack and loads JNI — defer until
+        // startCall() (which already calls prepare). Doing it here keeps the
+        // process hot even when the user is only looking at the keypad.
         transcriptJob = scope.launch {
             callTranscriber.transcript.collectLatest(::mirrorCallerTranscript)
         }
@@ -224,6 +226,8 @@ class TelephonyController @Inject constructor(
         evidenceJob?.cancel()
         evidenceJob = scope.launch {
             while (true) {
+                val pollStartedAt = SystemClock.elapsedRealtime()
+                var hot = false
                 try {
                     val evidence = withContext(Dispatchers.IO) { sip.pollEvidence().get() }
                     if (evidence.metrics.activeCallId >= 0) {
@@ -272,12 +276,23 @@ class TelephonyController @Inject constructor(
                         dialogueJob?.cancel()
                         _callState.value = CallStateInfo.Idle
                     }
+                    // Stay on the fast interval only while a call/media path is
+                    // live or SIP just delivered events — otherwise a 50ms JNI
+                    // poll burns a core while the user stares at the keypad.
+                    hot = evidence.metrics.mediaActive ||
+                        evidence.metrics.activeCallId >= 0 ||
+                        evidence.events.isNotEmpty() ||
+                        _callState.value !is CallStateInfo.Idle ||
+                        _sipState.value == SipState.IN_CALL ||
+                        _sipState.value == SipState.REGISTERING
                 } catch (e: Exception) {
                     Timber.e(e, "Evidence poll failed")
                     _sipState.value = SipState.FAILED
                     break
                 }
-                delay(EVIDENCE_POLL_MS)
+                val target = if (hot) EVIDENCE_POLL_HOT_MS else EVIDENCE_POLL_IDLE_MS
+                val elapsed = SystemClock.elapsedRealtime() - pollStartedAt
+                delay((target - elapsed).coerceAtLeast(0L))
             }
         }
     }
@@ -862,7 +877,10 @@ class TelephonyController @Inject constructor(
     }
 
     private companion object {
-        const val EVIDENCE_POLL_MS = 50L
+        /** In-call / media / registering — keep event latency tight. */
+        const val EVIDENCE_POLL_HOT_MS = 50L
+        /** Registered idle — drain occasionally; do not spin the native thread. */
+        const val EVIDENCE_POLL_IDLE_MS = 1_500L
         const val SIP_READY_TIMEOUT_MS = 20_000L
         const val CALLER_REPLY_TIMEOUT_MS = 45_000L
         /** Silence after last partial change when SODA never emits a final. */

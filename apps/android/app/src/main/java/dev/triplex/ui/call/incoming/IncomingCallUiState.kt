@@ -61,10 +61,16 @@ enum class IncomingCallActionId {
 /**
  * A control on the sheet.
  *
- * A missing capability disables an action and gives it a [reason]; it never
- * removes it. A control that vanishes teaches the user nothing, and a control
- * that does nothing when tapped is worse — so every disabled action carries the
- * sentence explaining itself (reskin.md §3.3, §5).
+ * A capability the platform merely *withholds* — a carrier that will not carry
+ * an SMS reply, a call that has stopped being answerable — disables the action
+ * and gives it a [reason], because the user is better off knowing the control
+ * exists and why it is dead than wondering where it went (reskin.md §3.3, §5).
+ *
+ * An agent hand-off that cannot happen at all is a different case and is
+ * omitted from [IncomingCallUiState.actions] entirely. "Send to agent" on a leg
+ * with no deflection and no agent number is not a control the user can unlock by
+ * changing something on this call; drawing it greyed out only advertises a
+ * feature this call will never have.
  */
 data class IncomingCallAction(
     val id: IncomingCallActionId,
@@ -110,9 +116,17 @@ fun incomingCallUiState(
         agentHasMedia = capabilities.agentHasMedia,
         timeline = session.timeline,
         quickReplies = if (capabilities.agentHasMedia) config.quickReplies else emptyList(),
-        automations = templates
-            .filter { it.id in config.enabledAutomationIds }
-            .map { IncomingAutomationOption(it.id, it.title, it.description) },
+        // Same gate as the reply chips, for the same reason: handing a call to an
+        // automation means the automation talks on it, and nothing can talk on a
+        // leg Triplex holds no media for. A picker offered on a SIM call would be
+        // a menu of things that cannot happen.
+        automations = if (capabilities.agentHasMedia) {
+            templates
+                .filter { it.id in config.enabledAutomationIds }
+                .map { IncomingAutomationOption(it.id, it.title, it.description) }
+        } else {
+            emptyList()
+        },
         actions = buildActions(session, takeover),
         takeoverNotice = if (takeover) AGENT_ONLY_AUDIO_NOTICE else null,
     )
@@ -142,52 +156,63 @@ private fun buildActions(
     val capabilities = session.capabilities
     val agentless = !capabilities.agentHasMedia
 
-    return listOf(
-        IncomingCallAction(
-            id = IncomingCallActionId.ANSWER,
-            label = "Answer",
-            enabled = capabilities.canAnswer,
-            reason = when {
-                capabilities.canAnswer -> null
-                takeover -> "You already took this call."
-                else -> "This call can no longer be answered."
-            },
-        ),
-        IncomingCallAction(
-            id = IncomingCallActionId.DECLINE,
-            label = "Decline",
-            enabled = capabilities.canDecline,
-            reason = if (capabilities.canDecline) null else "This call can no longer be declined.",
-        ),
-        IncomingCallAction(
-            id = IncomingCallActionId.HANG_UP,
-            label = "Hang up",
-            enabled = true,
-        ),
-        IncomingCallAction(
-            id = IncomingCallActionId.TEXT_REPLY,
-            label = "Reply with text",
-            enabled = capabilities.canTextReply,
-            reason = when {
-                capabilities.canTextReply -> null
-                agentless -> "This call does not offer a text reply on your carrier or SIM."
-                else -> "A screened call has no SMS line to reply on."
-            },
-        ),
-        IncomingCallAction(
-            id = IncomingCallActionId.SEND_TO_AGENT,
-            label = "Send to agent",
-            enabled = capabilities.canDeflectToAgent,
-            reason = when {
-                capabilities.canDeflectToAgent -> null
-                // canDeflectToAgent folds both causes on a SIM leg: the carrier
-                // may not support deflection, or no agent number is configured.
-                agentless ->
-                    "Sending a SIM call to Triplex needs carrier deflection and an " +
-                        "agent number set up on this device."
-
-                else -> "This call has already been handed over."
-            },
-        ),
-    )
+    return buildList {
+        add(
+            IncomingCallAction(
+                id = IncomingCallActionId.ANSWER,
+                label = "Answer",
+                enabled = capabilities.canAnswer,
+                reason = when {
+                    capabilities.canAnswer -> null
+                    takeover -> "You already took this call."
+                    else -> "This call can no longer be answered."
+                },
+            )
+        )
+        add(
+            IncomingCallAction(
+                id = IncomingCallActionId.DECLINE,
+                label = "Decline",
+                enabled = capabilities.canDecline,
+                reason = if (capabilities.canDecline) {
+                    null
+                } else {
+                    "This call can no longer be declined."
+                },
+            )
+        )
+        add(
+            IncomingCallAction(
+                id = IncomingCallActionId.HANG_UP,
+                label = "Hang up",
+                enabled = true,
+            )
+        )
+        add(
+            IncomingCallAction(
+                id = IncomingCallActionId.TEXT_REPLY,
+                label = "Reply with text",
+                enabled = capabilities.canTextReply,
+                reason = when {
+                    capabilities.canTextReply -> null
+                    agentless -> "This call does not offer a text reply on your carrier or SIM."
+                    else -> "A screened call has no SMS line to reply on."
+                },
+            )
+        )
+        // Present only when the hand-off can actually be performed. On a SIM leg
+        // canDeflectToAgent folds both preconditions — carrier deflection support
+        // and an agent number on the device — and neither is something the user
+        // can change while the phone is ringing, so a disabled "Send to agent"
+        // would be a button that can only ever disappoint.
+        if (capabilities.canDeflectToAgent) {
+            add(
+                IncomingCallAction(
+                    id = IncomingCallActionId.SEND_TO_AGENT,
+                    label = "Send to agent",
+                    enabled = true,
+                )
+            )
+        }
+    }
 }

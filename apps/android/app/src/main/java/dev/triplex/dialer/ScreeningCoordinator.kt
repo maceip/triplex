@@ -3,12 +3,14 @@ package dev.triplex.dialer
 import dev.triplex.data.call.SipCallController
 import dev.triplex.data.call.SipCallSource
 import dev.triplex.data.call.SipScreeningState
+import dev.triplex.data.local.AgentCallPolicy
 import dev.triplex.data.local.AgentConfigRepository
 import dev.triplex.data.local.SecureStorage
 import dev.triplex.data.remote.GatewayApi
 import dev.triplex.data.remote.ScreeningSession
 import dev.triplex.data.repository.Result
 import dev.triplex.data.repository.UserRepository
+import dev.triplex.domain.model.AutomationCatalog
 import dev.triplex.telephony.sip.CallStateInfo
 import dev.triplex.telephony.sip.TelephonyController
 import kotlinx.coroutines.CancellationException
@@ -231,17 +233,21 @@ class ScreeningCoordinator @Inject constructor(
     private data class Readiness(val ready: Boolean, val mediaReady: Boolean)
 
     private suspend fun pollGatewayScreening() {
+        var idleBackoffMs = GATEWAY_POLL_IDLE_MS
         while (true) {
             val token = secureStorage.getDeviceToken()
             if (token == null) {
-                delay(GATEWAY_POLL_INTERVAL_MS)
+                delay(GATEWAY_POLL_IDLE_MS)
                 continue
             }
+            val sessionHot = _session.value != null ||
+                telephonyController.callState.value !is CallStateInfo.Idle
             try {
                 val active = gatewayApi.getActiveScreening(token)
                 val previous = _session.value
                 if (active != null) {
                     _session.value = active
+                    idleBackoffMs = GATEWAY_POLL_IDLE_MS
                     _message.value = when (active.status) {
                         "asking" -> "The caller is answering now"
                         "ready", "holding" -> "The caller is waiting for your decision"
@@ -256,8 +262,18 @@ class ScreeningCoordinator @Inject constructor(
             } catch (error: Exception) {
                 Timber.w(error, "Live screening refresh failed")
                 _message.value = "Reconnecting to live call screening"
+                // Back off on errors so a flaky tunnel does not TLS-hammer.
+                idleBackoffMs = (idleBackoffMs * 2).coerceAtMost(GATEWAY_POLL_ERROR_MAX_MS)
+                delay(idleBackoffMs)
+                continue
             }
-            delay(GATEWAY_POLL_INTERVAL_MS)
+            delay(
+                if (sessionHot || _session.value != null) {
+                    GATEWAY_POLL_HOT_MS
+                } else {
+                    idleBackoffMs
+                },
+            )
         }
     }
 
@@ -300,7 +316,15 @@ class ScreeningCoordinator @Inject constructor(
             _message.value = when (decision) {
                 ScreeningDecision.ACCEPT -> "Preparing secure phone connection"
                 ScreeningDecision.DECLINE -> "Declining call"
-                ScreeningDecision.AGENT -> "Starting Book a meeting"
+                // Named after whatever the user actually picked. The old string
+                // was one automation's title hard-coded, so handing a call to
+                // "Explain a delay" announced "Starting Book a meeting".
+                ScreeningDecision.AGENT -> if (automationId == null) {
+                    "Handing to Triplex"
+                } else {
+                    val title = AutomationCatalog.byId(automationId)?.title
+                    "Starting ${title ?: "the automation"}"
+                }
             }
             if (!current.call_uuid.startsWith("sip-")) {
                 decideGatewayScreening(current, decision, automationId)
@@ -327,8 +351,21 @@ class ScreeningCoordinator @Inject constructor(
                         decision = automationId,
                         updated_at = Instant.now().toString(),
                     )
+                    // The plan is resolved here rather than trusted from
+                    // startAutomation's return value. That method reports only
+                    // whether a call was live: the config read that decides
+                    // whether the automation is known and enabled is suspending,
+                    // so it happens inside the dialogue coroutine and its answer
+                    // never reaches the caller. Claiming success on `true` meant
+                    // announcing a speaking automation while the engine had
+                    // silently logged an unknown id and done nothing.
+                    val plan = automationId?.let {
+                        AgentCallPolicy.screeningPlan(agentConfig.inboundConfig(), it)
+                    }
                     _message.value = if (
-                        automationId != null && telephonyController.startAutomation(automationId)
+                        automationId != null &&
+                        plan != null &&
+                        telephonyController.startAutomation(automationId)
                     ) {
                         "Automation is speaking and listening on this call"
                     } else {
@@ -385,7 +422,11 @@ class ScreeningCoordinator @Inject constructor(
     )
 
     private companion object {
-        const val GATEWAY_POLL_INTERVAL_MS = 750L
+        /** While a screening session (gateway or SIP) is live. */
+        const val GATEWAY_POLL_HOT_MS = 750L
+        /** No live session — stop hammering TLS every sub-second. */
+        const val GATEWAY_POLL_IDLE_MS = 8_000L
+        const val GATEWAY_POLL_ERROR_MAX_MS = 60_000L
 
         /**
          * Comfortably inside the gateway's `DEVICE_HEARTBEAT_TTL_SECONDS`

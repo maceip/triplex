@@ -49,6 +49,21 @@ class ShellInsetsTest {
     }
 
     @Test
+    fun theRailReservesItsColumnOnTopOfTheSystemInset() {
+        val resolved = resolveShellContentInsets(system, hasBottomBar = false, railWidth = 88.dp)
+
+        assertEquals(96.dp, resolved.left)
+        assertEquals(system.right, resolved.right)
+    }
+
+    @Test
+    fun aRailReplacesTheBarSoTheBottomInsetComesBack() {
+        val resolved = resolveShellContentInsets(system, hasBottomBar = false, railWidth = 88.dp)
+
+        assertEquals(system.bottom, resolved.bottom)
+    }
+
+    @Test
     fun defaultsAreZeroOnEveryEdge() {
         val none = ShellInsets()
 

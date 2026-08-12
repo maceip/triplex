@@ -30,6 +30,7 @@ import dev.triplex.ui.components.TriplexReveal
 import dev.triplex.ui.components.TriplexScreenHeader
 import dev.triplex.ui.components.TriplexStatusPill
 import dev.triplex.ui.theme.TriplexLayout
+import dev.triplex.ui.theme.triplexContentWidth
 import zed.rainxch.rikkaicons.tokens.Phone
 import zed.rainxch.rikkaicons.tokens.RikkaIcons
 import zed.rainxch.rikkaui.components.ui.progress.Progress
@@ -54,6 +55,7 @@ fun EnrollmentScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .triplexContentWidth()
             .padding(horizontal = TriplexLayout.screenHorizontal)
             .padding(top = spacing.xl, bottom = spacing.xxl),
         verticalArrangement = Arrangement.spacedBy(spacing.xl)
@@ -66,10 +68,15 @@ fun EnrollmentScreen(
         }
 
         TriplexReveal(delayMillis = TriplexLayout.staggerMillis) {
+            Text(
+                text = "TRIPLEX",
+                variant = TextVariant.Large,
+                color = RikkaTheme.colors.primary,
+            )
             TriplexScreenHeader(
-                eyebrow = "WELCOME TO TRIPLEX",
+                eyebrow = "WELCOME",
                 title = "Your voice agent starts here.",
-                description = "Connect this phone once. Triplex stays ready for the bounded calls you approve."
+                description = "Connect this phone once. The dialer works immediately; the agent line and voice lab unlock as you go."
             )
         }
 
@@ -81,7 +88,7 @@ fun EnrollmentScreen(
                 ) {
                     Text("Secure setup", variant = TextVariant.H3)
                     Text(
-                        "Your account links this device to its assigned number and encrypted local state.",
+                        "Your account links this device to its assigned number and encrypted local state. SIP credentials arrive when the Triplex line is provisioned.",
                         color = RikkaTheme.colors.onMuted
                     )
 
