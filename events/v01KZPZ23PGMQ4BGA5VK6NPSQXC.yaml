@@ -1,0 +1,11 @@
+id: v01KZPZ23PGMQ4BGA5VK6NPSQXC
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Fix Triplex CI paths, services, and Android JVM gates.
+    ref: bb6cc102c6feb1cd4b7e22245836d5292c785cd0
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T23:10:26Z

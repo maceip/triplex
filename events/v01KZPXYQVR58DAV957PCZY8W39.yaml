@@ -1,0 +1,11 @@
+id: v01KZPXYQVR58DAV957PCZY8W39
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Rebuild TriplexBackground on GlassScenery.
+    ref: 17bddd3ab0edf4d202ec55d2698d9da635ba83d0
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T22:51:07Z

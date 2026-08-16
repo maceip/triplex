@@ -1,0 +1,11 @@
+id: v01KZ9HGN6R0SC61B25GB19DT77
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Finish Android voice enrollment polish
+    ref: b11a26cd9f40a15a8900931ac4ba420aff481417
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T18:03:35Z

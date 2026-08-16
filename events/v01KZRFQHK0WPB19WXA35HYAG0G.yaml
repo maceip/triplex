@@ -1,0 +1,11 @@
+id: v01KZRFQHK0WPB19WXA35HYAG0G
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Load telemetry API key from env/BuildConfig instead of source.
+    ref: c803f2d1a48f606ebb0ff8e092d676530347a2fe
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T13:21:00Z

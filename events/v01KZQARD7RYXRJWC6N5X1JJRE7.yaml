@@ -1,0 +1,11 @@
+id: v01KZQARD7RYXRJWC6N5X1JJRE7
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Add passkey (WebAuthn) enrollment and authentication
+    ref: 816665a2e127af84ff79177621c60ae518fb227d
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T02:34:51Z

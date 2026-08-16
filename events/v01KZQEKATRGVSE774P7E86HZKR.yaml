@@ -1,0 +1,11 @@
+id: v01KZQEKATRGVSE774P7E86HZKR
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Document passkey system status
+    ref: c0a5674b01bfaf9715e14cd031b3f9d45546740a
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T03:41:59Z

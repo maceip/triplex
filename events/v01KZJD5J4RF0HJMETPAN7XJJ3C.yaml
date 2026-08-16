@@ -1,0 +1,11 @@
+id: v01KZJD5J4RF0HJMETPAN7XJJ3C
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: 'feat: wire Triplex telephony and on-device voice stack'
+    ref: 02164368c59226fb24e5f31d70e49f7fa1acaf0a
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-09T04:40:47Z

@@ -1,0 +1,11 @@
+id: v01KZ81QKGRVZTME8ARG5GG7FXG
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: 'Phase 4: branded TTS measured on device; ships local'
+    ref: 4fb3fdeed99a7fa1c907c4ef7fd8bfc9ebd593d5
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T04:08:31Z

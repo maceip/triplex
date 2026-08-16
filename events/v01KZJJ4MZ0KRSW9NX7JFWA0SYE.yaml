@@ -1,0 +1,11 @@
+id: v01KZJJ4MZ0KRSW9NX7JFWA0SYE
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Add UI reskin architecture and wiring plan for the four dialer surfaces
+    ref: e281f6d54cf7aed59cbc7296e9b35c4ecdc5e85e
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-09T06:07:40Z

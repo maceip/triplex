@@ -1,0 +1,11 @@
+id: v01KZSXNXB8FATEJVP46K9PBSZE
+kind: evidence
+entry: e01KZ9GS8PCHJ5PDCGD62EXAR8N
+payload:
+    kind: churn
+    note: Wire Qwen3 TTS asset delivery and voice-clone download path.
+    ref: churn:aaaacee62d1abc6432fd8cb1629b07a72d30e389
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-12T02:44:01Z

@@ -1,0 +1,11 @@
+id: v01KZQNF4181STZSKXGTCW6SYM9
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Drop Material3 from the Android Compose catalog.
+    ref: e983d18c64245ee25ca60cc9c12dd577845af08e
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T05:42:01Z

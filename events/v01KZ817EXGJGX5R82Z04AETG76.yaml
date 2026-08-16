@@ -1,0 +1,11 @@
+id: v01KZ817EXGJGX5R82Z04AETG76
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: 'Phase 1: disposition ledger, word-timestamp resolution, mined assertions'
+    ref: 75a2e502fad445e79f671802f120479155fdafaf
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T03:59:42Z

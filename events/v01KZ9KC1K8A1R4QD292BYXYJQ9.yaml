@@ -1,0 +1,11 @@
+id: v01KZ9KC1K8A1R4QD292BYXYJQ9
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Animate voice enrollment alignment
+    ref: b5d03805483131f1b05440db9652d746bbe2b290
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T18:36:01Z

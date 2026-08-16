@@ -1,0 +1,11 @@
+id: v01KZQJ4C0RRBB42SB0PP0KG7RZ
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Route Plivo Direct to the phone without a Kamailio edge.
+    ref: 24133162c4ff44f2b934e329e48574141d0f66c5
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T04:43:43Z

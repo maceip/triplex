@@ -1,0 +1,11 @@
+id: v01KZQAASP88930EBB9YXFTGHXF
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: 'Fix the review findings from #3, starting with the one that breaks deploys'
+    ref: 361cf400fe99d59adb5c356fa03e5a164716d15d
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T02:27:25Z

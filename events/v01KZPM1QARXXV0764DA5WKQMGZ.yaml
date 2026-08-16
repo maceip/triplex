@@ -1,0 +1,11 @@
+id: v01KZPM1QARXXV0764DA5WKQMGZ
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Give the agent a real conversation, and the gateway a real handoff
+    ref: 9e4495628dd9fa98e046acb295acdbafbe337f94
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T19:57:59Z

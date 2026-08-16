@@ -1,0 +1,11 @@
+id: v01KZ7ZSXWG7B805WHTQ6BJW7JX
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Land phone-first runtime, gateway, voice cloning, and Plivo inbound
+    ref: 0f913cd60e2ec5d010373739ff368544e5b84513
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T03:34:50Z

@@ -1,0 +1,11 @@
+id: v01KZQBFS98BYZDAXDRX2A45V6D
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Bound the availability probe by the call's remaining budget.
+    ref: ec0fc15cab62590ef85de8fb780ced08f13bc390
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T02:47:37Z

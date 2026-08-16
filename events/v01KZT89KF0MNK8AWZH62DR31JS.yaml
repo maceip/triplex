@@ -1,0 +1,11 @@
+id: v01KZT89KF0MNK8AWZH62DR31JS
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Allocate per-user Plivo DID and SIP on entitlement claim.
+    ref: 70638dfdf50cd73a20643a048b0e7695b0e4fb38
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-12T05:49:32Z

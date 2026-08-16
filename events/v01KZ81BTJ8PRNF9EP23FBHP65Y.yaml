@@ -1,0 +1,11 @@
+id: v01KZ81BTJ8PRNF9EP23FBHP65Y
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: 'Phase 2: port retired contracts into the invariants; one turn FSM'
+    ref: f95678730e4a6874f4558fa6a922c5b55e2f4c58
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T04:02:05Z

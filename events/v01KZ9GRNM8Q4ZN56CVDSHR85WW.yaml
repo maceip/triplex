@@ -1,0 +1,11 @@
+id: v01KZ9GRNM8Q4ZN56CVDSHR85WW
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Record the full speech model review, including rejections
+    ref: f295abc99fb3563f00284eee3123f40bacab3cc9
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-05T17:50:29Z

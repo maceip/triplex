@@ -1,0 +1,11 @@
+id: v01KZT33H0GCF2FWW6QJNG38EK2
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Stream voice-clone preview audio like live call speak.
+    ref: a1247b4cc8c1174e55bd88cf614a2f94bce1cf66
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-12T04:18:50Z

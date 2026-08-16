@@ -1,0 +1,11 @@
+id: v01KZQNTDBRF9RG8PA1D549ZYP0
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Rewrite READMEs to match the shipping Direct stack.
+    ref: 3d9c3083c8905dc5c0ea4d887fade8c82deaf0f5
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T05:48:11Z

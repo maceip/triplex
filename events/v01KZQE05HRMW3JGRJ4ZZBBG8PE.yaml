@@ -1,0 +1,11 @@
+id: v01KZQE05HRMW3JGRJ4ZZBBG8PE
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Document production deployment
+    ref: ef76f867a56659c11da418ec6f01ccea5cd0ede5
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T03:31:31Z

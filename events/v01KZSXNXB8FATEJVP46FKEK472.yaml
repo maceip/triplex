@@ -1,0 +1,11 @@
+id: v01KZSXNXB8FATEJVP46FKEK472
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Wire Qwen3 TTS asset delivery and voice-clone download path.
+    ref: aaaacee62d1abc6432fd8cb1629b07a72d30e389
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-12T02:44:01Z

@@ -1,0 +1,11 @@
+id: v01KZPZVWWR6XHT9ZXM0FJF65WQ
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Raise app minSdk to 33 for RikkaUI composite builds.
+    ref: b5f7ca08da46edf3c7984797da5ef0c34dfb8189
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T23:24:31Z

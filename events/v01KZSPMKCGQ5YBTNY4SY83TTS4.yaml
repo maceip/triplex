@@ -1,0 +1,11 @@
+id: v01KZSPMKCGQ5YBTNY4SY83TTS4
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Polish liquid glass dialer chrome and keep Keypad↔Agent warm.
+    ref: f397014ef412b2dfa9911e9ea89b7c61df4ffe1b
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-12T00:40:58Z

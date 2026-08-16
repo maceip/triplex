@@ -1,0 +1,11 @@
+id: v01KZPH0TR0NPKKN85DW6ZZ4BNH
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Fix Plivo SIP TLS contact registration
+    ref: 36165c26b2ffc60ec35bf154b2f9163f965a901d
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T19:05:04Z

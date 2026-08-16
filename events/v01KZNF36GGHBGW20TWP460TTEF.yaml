@@ -1,0 +1,11 @@
+id: v01KZNF36GGHBGW20TWP460TTEF
+kind: evidence
+entry: e01KZ9GY8S9CYCGF15GXXCV1KR4
+payload:
+    kind: commit
+    note: Add telemetry integration to gateway and Android app
+    ref: 374e078533933aca358c437b13cdfea30b438a01
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T09:12:10Z

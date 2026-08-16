@@ -1,0 +1,11 @@
+id: v01KZQCAZD0NREH3YV512XDQ52S
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Fix WebAuthn challenge encoding
+    ref: befcfabe022cac6a15d20995f2216b89b3f216a3
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-11T03:02:28Z

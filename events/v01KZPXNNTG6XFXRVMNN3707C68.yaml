@@ -1,0 +1,11 @@
+id: v01KZPXNNTG6XFXRVMNN3707C68
+kind: evidence
+entry: e01KZCPWDR508JDJATJYXPJNX5X
+payload:
+    kind: commit
+    note: Fix CI allocation guard and decouple independent jobs
+    ref: 014c9b63dde49404d86e72634050b487f05464c8
+by:
+    who: differ
+    surface: macs-MacBook-Pro
+at: 2026-08-10T22:46:10Z
