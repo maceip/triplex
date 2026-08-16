@@ -2,6 +2,31 @@
 
 _generated 2026-08-16 21:23 UTC · 6 live entries (1 decisions · 3 findings · 1 questions · 1 intents) · 6 total in history_
 
+## DECIDED
+
+- `e01KZCPWDR508JDJATJYXPJNX5X` Compile TTS graphs with LiteRT AOT directly, not through LiteRT-LM — 9d · active
+
+## LEARNED
+
+- `e01KZCPWDR5P45T9ZDFG8EREP2D` Voice pipeline speaks on-device, but ASR and reasoning are placeholders — 9d · current
+- `e01KZCPWDR508JDJATJYVB0X4Z9` ONNX Runtime cannot reach the Pixel Tensor TPU; LiteRT is the only path — 9d · current
+- `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 11d · suspect
+
+## OPEN
+
+- `e01KZCPWDR5HCA32H7R8YQH36A2` Sequence the five linked models before or after closing ASR/reasoner gaps? — 9d · open ★
+
+## ALERTS
+
+- suspect `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 11d
+- ★ human question aging `e01KZCPWDR5HCA32H7R8YQH36A2` Sequence the five linked models before or after closing ASR/reasoner gaps? — 9d
+
+## Intent × reality
+
+| Intent | Age | Reality | State |
+|---|---:|---:|---|
+| `e01KZ9GY8S9CYCGF15GXXCV1KR4` Implement all linked Hugging Face TTS models on-device only | 11d | 33 evidence | in_flight |
+
 ## Decisions
 
 ### e01KZCPWDR508JDJATJYXPJNX5X — Compile TTS graphs with LiteRT AOT directly, not through LiteRT-LM  `active`
