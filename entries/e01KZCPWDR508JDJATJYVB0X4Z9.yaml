@@ -1,0 +1,24 @@
+id: e01KZCPWDR508JDJATJYVB0X4Z9
+type: finding
+title: ONNX Runtime cannot reach the Pixel Tensor TPU; LiteRT is the only path
+body: 'Measured on the Pixel 10 Pro Fold (Tensor G5): ONNX Runtime''s Android providers are only CPU, NNAPI and XNNPACK. In a four-provider test NNAPI detected the EdgeTPU but offloaded 0 of 886 nodes (unchanged with CPU_DISABLED); RTF stayed ~5 across all providers. Causes: dynamic shapes and int64 tensors. Only LiteRT ships the Google Tensor dispatch bridge, so TPU access requires LiteRT.'
+quote: 'NNAPI *found* the TPU — `Manager: Found interface google-edgetpu (version = 2.0)` — then claimed not one op. Forcing `CPU_DISABLED` changed nothing, confirming it''s a partitioning result, not a scheduling preference.'
+utterance_by: assistant
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2481
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-06T23:35:06.757Z
+confidence: 0.9
+tags:
+    - apps/android/**
+    - testlab/litert-aot/**
+    - docs/**
+env:
+    host: Pixel 10 Pro Fold
+    hw: Google Tensor G5 / EdgeTPU
+    dataset: Supertonic TTS graphs, 886 nodes
+affects:
+    - apps/android/agent/src/litert.rs
+    - apps/android/agent/src/tts_supertonic.rs

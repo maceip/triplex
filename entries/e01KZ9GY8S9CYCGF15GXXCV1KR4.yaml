@@ -1,0 +1,18 @@
+id: e01KZ9GY8S9CYCGF15GXXCV1KR4
+type: intent
+title: Implement all linked Hugging Face TTS models on-device only
+body: 'Standing user requirement: integrate every Hugging Face model/project the user linked into the Android app, faithfully, on-device only; anything that would otherwise need a server GPU must run through LiteRT with the phone''s TPU/GPU. Currently unmet — the shipping voice is Supertonic, which came from the sibling ~/neural project and is not one of the linked models.'
+quote: for all the hugging face models/projects i linked, set them up inside of our android app, faithfully implementinging them to the best of your ability. on-device only.
+utterance_by: user
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2334
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-05T17:53:32.457Z
+confidence: 0.95
+tags:
+    - apps/android/**
+    - docs/MODEL_REVIEW_TTS.md
+env: null
+affects: []

@@ -1,0 +1,18 @@
+id: e01KZCPWDR508JDJATJYXPJNX5X
+type: decision
+title: Compile TTS graphs with LiteRT AOT directly, not through LiteRT-LM
+body: 'LiteRT-LM is the LLM packaging layer (.litertlm, text-in/text-out) and carries an 8-bit size penalty; TTS needs codec tokens out to a vocoder, which that layer does not express. Decision: use LiteRT AOT compilation on the model graphs directly. Note the earlier claim that Gemma 3n''s audio support helps was wrong-directioned — Gemma takes audio in, TTS emits codec tokens out.'
+quote: We compile the model graphs with LiteRT AOT directly, which sidesteps the packaging layer and its 8-bit size penalty entirely.
+utterance_by: assistant
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2481
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-06T23:35:06.757Z
+confidence: 0.86
+tags:
+    - apps/android/**
+    - testlab/litert-aot/**
+env: null
+affects: []

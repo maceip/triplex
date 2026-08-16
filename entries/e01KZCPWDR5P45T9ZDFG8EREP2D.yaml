@@ -1,0 +1,23 @@
+id: e01KZCPWDR5P45T9ZDFG8EREP2D
+type: finding
+title: Voice pipeline speaks on-device, but ASR and reasoning are placeholders
+body: 'On the Pixel 10 Pro Fold the full loop runs: injected caller audio, VAD, turn FSM, Supertonic synthesis with flow matching (12.1 ms/step, 27x CPU) and vocoder on the TPU, paced egress; pulled output transcribes back as the intended sentence and barge-in interrupts mid-utterance. Duration and text-encoder stages stay on CPU pending Google bug LiteRT#9152. The agent still cannot understand words or…'
+quote: ASR is a placeholder that detects sound but not words, and the reasoner always replies with one fixed sentence.
+utterance_by: assistant
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2481
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-06T23:35:06.757Z
+confidence: 0.88
+tags:
+    - apps/android/agent/**
+    - apps/android/native-media/**
+env:
+    host: Pixel 10 Pro Fold
+    hw: Google Tensor G5
+    dataset: adb DEMO_TURN loopback, whisper verification
+affects:
+    - apps/android/agent/src/vad.rs
+    - apps/android/agent/src/reasoner.rs

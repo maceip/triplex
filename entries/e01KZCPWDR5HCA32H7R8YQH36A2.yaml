@@ -1,0 +1,18 @@
+id: e01KZCPWDR5HCA32H7R8YQH36A2
+type: question
+title: Sequence the five linked models before or after closing ASR/reasoner gaps?
+body: 'Open: whether to push the five linked HF models through the proven ONNX -> static bucket -> tflite -> AOT -> TPU pipeline next, or first replace the placeholder ASR and the fixed-sentence reasoner. Assistant recommends Audio8 first (only linked model that clones, official INT4 export) but left the ordering to the user. Unanswered in this slice.'
+quote: The honest sequencing question is whether to push your five through that pipeline now, or first close the two gaps that make the agent not-an-agent
+utterance_by: assistant
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2481
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-06T23:35:06.757Z
+confidence: 0.85
+tags:
+    - apps/android/**
+env: null
+affects: []
+asks: human

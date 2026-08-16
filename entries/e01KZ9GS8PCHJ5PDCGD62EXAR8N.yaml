@@ -1,0 +1,21 @@
+id: e01KZ9GS8PCHJ5PDCGD62EXAR8N
+type: finding
+title: No small TTS model clones; realistic cloning floor is ~350M params
+body: 'Review of the five linked HF models: the tiny models (Inflect-Micro-v2 9.4M, Kokoro-82M) are small because they bake in fixed voices; Qwen CustomVoice (1.7B) has presets only despite its name. Only Chatterbox Turbo (350M, MIT) and Audio8 (601M) clone; fishaudio/s2-pro (5B) is research-licence only. Cloning runs on a server today because the integrated Qwen3-TTS has no mobile export — on-device wa…'
+quote: None of the small models can clone, and none of the cloning models is small.
+utterance_by: assistant
+source:
+    kind: session
+    ref: claude-code:/Users/mac/.claude/projects/-Users-mac-triplex/7e975131-5649-4463-9ca6-2e3c256af6a2.jsonl#L2331
+    agent: claude-code
+    surface: macs-MacBook-Pro
+    at: 2026-08-05T17:50:48.524Z
+confidence: 0.9
+tags:
+    - docs/MODEL_REVIEW_TTS.md
+    - docs/DECISION_TTS_PLACEMENT.md
+    - apps/android/**
+env:
+    dataset: five linked Hugging Face TTS repos
+affects:
+    - docs/MODEL_REVIEW_TTS.md
