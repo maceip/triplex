@@ -25,7 +25,7 @@ _generated 2026-08-17 17:53 UTC · 6 live entries (1 decisions · 3 findings · 
 
 | Intent | Age | Reality | State |
 |---|---:|---:|---|
-| `e01KZ9GY8S9CYCGF15GXXCV1KR4` Implement all linked Hugging Face TTS models on-device only | 11d | 33 evidence | in_flight |
+| `e01KZ9GY8S9CYCGF15GXXCV1KR4` Implement all linked Hugging Face TTS models on-device only | 12d | 33 evidence | in_flight |
 
 ## Decisions
 
