@@ -10,7 +10,7 @@ _generated 2026-08-18 17:50 UTC · 6 live entries (1 decisions · 3 findings · 
 
 - `e01KZCPWDR5P45T9ZDFG8EREP2D` Voice pipeline speaks on-device, but ASR and reasoning are placeholders — 11d · current
 - `e01KZCPWDR508JDJATJYVB0X4Z9` ONNX Runtime cannot reach the Pixel Tensor TPU; LiteRT is the only path — 11d · current
-- `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 12d · suspect
+- `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 13d · suspect
 
 ## OPEN
 
@@ -18,7 +18,7 @@ _generated 2026-08-18 17:50 UTC · 6 live entries (1 decisions · 3 findings · 
 
 ## ALERTS
 
-- suspect `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 12d
+- suspect `e01KZ9GS8PCHJ5PDCGD62EXAR8N` No small TTS model clones; realistic cloning floor is ~350M params — 13d
 - ★ human question aging `e01KZCPWDR5HCA32H7R8YQH36A2` Sequence the five linked models before or after closing ASR/reasoner gaps? — 11d
 
 ## Intent × reality
